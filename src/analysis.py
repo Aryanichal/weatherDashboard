@@ -1,5 +1,4 @@
 """Simple on-demand analysis tools applied to a selection of weather data.
-
 Kept intentionally minimal: a linear trend fit and a KMeans clustering of
 stations. Extend with more sklearn models as needed.
 """
