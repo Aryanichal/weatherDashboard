@@ -1,10 +1,11 @@
 # Contributing
 
 ## Workflow
-1. Create a branch off `main`: `git checkout -b feature/short-description`
+1. Create a branch off `develop`: `git checkout develop && git pull && git checkout -b feature/short-description`
 2. Commit small, focused changes.
-3. Open a pull request into `main` and ask at least one teammate to review.
-4. Squash or rebase merge once approved — keep `main` history readable.
+3. Open a pull request into `develop` and ask at least one teammate to review.
+4. Squash or rebase merge once approved — keep `develop` history readable.
+5. `main` is reserved for stable/release snapshots — only `develop` gets merged into `main`, periodically, not individual feature branches.
 
 ## Local setup
 See the "Setup" section in [README.md](README.md).
