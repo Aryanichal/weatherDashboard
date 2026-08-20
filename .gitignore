@@ -1,0 +1,38 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- Data (downloaded/cached locally, not committed) ---
+data/*
+!data/.gitkeep
+
+# --- Jupyter ---
+.ipynb_checkpoints/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Testing / coverage ---
+.pytest_cache/
+.coverage
+htmlcov/
