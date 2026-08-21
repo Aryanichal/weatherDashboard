@@ -11,7 +11,13 @@ import plotly.express as px
 import streamlit as st
 
 from src.analysis import cluster_stations, fit_trend
-from src.data_loader import get_station_data, list_stations
+from src.data_loader import (
+    get_climate_change_indicators_data,
+    get_hot_days_data,
+    get_long_run_climate_data,
+    get_station_data,
+    list_stations,
+)
 
 st.set_page_config(page_title="DWD Weather Dashboard", layout="wide")
 st.title("DWD Weather Dashboard")
@@ -35,6 +41,21 @@ def load_stations():
 @st.cache_data(show_spinner="Fetching observations from DWD...")
 def load_data(station_ids: list[str], start: str, end: str) -> pd.DataFrame:
     return get_station_data(station_ids, start, end)
+
+
+@st.cache_data(show_spinner="Loading long-run city temperatures from DWD...")
+def load_long_run_data() -> pd.DataFrame:
+    return get_long_run_climate_data()
+
+
+@st.cache_data(show_spinner="Calculating climate-change indicators from DWD observations...")
+def load_climate_change_indicators() -> pd.DataFrame:
+    return get_climate_change_indicators_data()
+
+
+@st.cache_data(show_spinner="Counting hot days from DWD observations...")
+def load_hot_days_data() -> pd.DataFrame:
+    return get_hot_days_data()
 
 
 with st.sidebar:
@@ -78,8 +99,8 @@ raw["station_name"] = raw["station_id"].map(id_to_name)
 parameter = st.selectbox("Parameter", sorted(raw["parameter"].unique()))
 subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
 
-tab_series, tab_map, tab_regression, tab_clustering = st.tabs(
-    ["Time Series", "Map", "Regression", "Clustering"]
+tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(
+    ["Time Series", "Map", "Regression", "Clustering", "Global Warming Trend"]
 )
 
 with tab_series:
@@ -131,3 +152,86 @@ with tab_clustering:
         )
         st.plotly_chart(fig, width="stretch")
         st.dataframe(clustered)
+
+with tab_global_warming:
+    climate_indicators = load_climate_change_indicators()
+    anomaly_plot_data = climate_indicators.melt(
+        id_vars=["city", "year"],
+        value_vars=["temperature_anomaly", "temperature_anomaly_5y"],
+        var_name="series",
+        value_name="temperature_anomaly_c",
+    )
+    anomaly_plot_data["series"] = anomaly_plot_data["series"].map(
+        {
+            "temperature_anomaly": "Annual anomaly",
+            "temperature_anomaly_5y": "5-year rolling mean",
+        }
+    )
+    anomaly_fig = px.line(
+        anomaly_plot_data,
+        x="year",
+        y="temperature_anomaly_c",
+        color="city",
+        line_dash="series",
+        labels={
+            "year": "Year",
+            "temperature_anomaly_c": "Temperature anomaly (°C, vs. 1991–2020)",
+            "city": "City",
+            "series": "Series",
+        },
+        title="Global Warming Trend",
+    )
+    st.plotly_chart(anomaly_fig, width="stretch")
+    st.caption(
+        "Anomalies are relative to each city's 1991–2020 annual-mean-temperature baseline; "
+        "2026 values are year-to-date."
+    )
+
+    hot_nights_col, heavy_rain_col = st.columns(2)
+    with hot_nights_col:
+        hot_nights_fig = px.line(
+            climate_indicators,
+            x="year",
+            y="hot_nights",
+            color="city",
+            markers=True,
+            labels={"year": "Year", "hot_nights": "Hot nights above 20 °C", "city": "City"},
+            title="Hot Nights",
+        )
+        st.plotly_chart(hot_nights_fig, width="stretch")
+    with heavy_rain_col:
+        heavy_rain_fig = px.line(
+            climate_indicators,
+            x="year",
+            y="heavy_rain_days",
+            color="city",
+            markers=True,
+            labels={"year": "Year", "heavy_rain_days": "Days above 20 mm", "city": "City"},
+            title="Heavy-Rain Days",
+        )
+        st.plotly_chart(heavy_rain_fig, width="stretch")
+
+    long_run_data = load_long_run_data()
+    temperature_fig = px.line(
+        long_run_data,
+        x="year",
+        y="observed_temp",
+        color="city",
+        markers=True,
+        labels={"year": "Year", "observed_temp": "Average July temperature (°C)", "city": "City"},
+        title="Average July Temperature",
+    )
+    st.plotly_chart(temperature_fig, width="stretch")
+
+    hot_days_data = load_hot_days_data()
+    hot_days_fig = px.line(
+        hot_days_data,
+        x="year",
+        y="days_above_30c",
+        color="city",
+        markers=True,
+        labels={"year": "Year", "days_above_30c": "Days above 30 °C", "city": "City"},
+        title="Hot Days Above 30 °C",
+    )
+    st.plotly_chart(hot_days_fig, width="stretch")
+    st.caption("The current year's hot-day count is year-to-date.")
