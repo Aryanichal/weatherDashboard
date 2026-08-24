@@ -53,15 +53,9 @@ useful to confirm your setup works before touching the Streamlit app.
 app.py               # Streamlit entry point — UI, tabs, layout
 src/data_loader.py    # Fetches + locally caches DWD station data
 src/analysis.py        # Regression / clustering helpers (sklearn)
-src/forecasting.py     # Hot-day and July-temperature forecasts (linear trend + PyTorch neural network)
 data/                  # Local cache of downloaded data (git-ignored)
 .streamlit/config.toml # Streamlit theme/server config
 ```
-
-The **Global Warming Future Trend Prediction** section exports its generated
-city hot-day (days above 30 °C) and average-July-temperature forecasts to
-`data/global_warming_forecasts.csv`. It uses complete annual data only, so an
-in-progress calendar year is not used to train or score a forecast.
 
 ## Contributing
 
