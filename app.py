@@ -6,36 +6,24 @@ Run with:
 
 import datetime as dt
 
-import pandas as pd
-import plotly.express as px
 import streamlit as st
 
-from src.analysis import cluster_stations, fit_trend
-from src.data_loader import get_station_data, list_stations
+from src.dashboard_context import DashboardContext
+from src.data_loader import load_data, load_stations
+from src.views import clustering, global_warming, map_view, regression, time_series
 
-st.set_page_config(page_title="DWD Weather Dashboard", layout="wide")
-st.title("DWD Weather Dashboard")
+st.set_page_config(page_title="Weather Dashboard", layout="wide")
+st.title("Weather Dashboard")
 
 # A handful of well-known stations as a sensible default so the app is
 # usable immediately, without forcing a full station list download+scroll.
 DEFAULT_STATIONS = {
     "00433": "Berlin-Tempelhof",
     "01048": "Dresden-Klotzsche",
-    "04177": "Muenchen-Stadt",
+    "03379": "Muenchen-Stadt",
     "02014": "Hamburg-Fuhlsbuettel",
     "01443": "Freiburg",
 }
-
-
-@st.cache_data(show_spinner="Loading station metadata from DWD...")
-def load_stations():
-    return list_stations()
-
-
-@st.cache_data(show_spinner="Fetching observations from DWD...")
-def load_data(station_ids: list[str], start: str, end: str) -> pd.DataFrame:
-    return get_station_data(station_ids, start, end)
-
 
 with st.sidebar:
     st.header("Selection")
@@ -60,6 +48,7 @@ with st.sidebar:
         value=(dt.date(2023, 1, 1), dt.date(2023, 12, 31)),
         min_value=dt.date(1950, 1, 1),
         max_value=dt.date.today(),
+        format="DD/MM/YYYY",
     )
 
 if not selected_ids:
@@ -75,59 +64,30 @@ if raw.empty:
 id_to_name = {v: k for k, v in id_by_name.items()}
 raw["station_name"] = raw["station_id"].map(id_to_name)
 
-parameter = st.selectbox("Parameter", sorted(raw["parameter"].unique()))
-subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
+ctx = DashboardContext(
+    raw=raw,
+    selected_ids=selected_ids,
+    selected_names=selected_names,
+    id_by_name=id_by_name,
+    id_to_name=id_to_name,
+    use_full_list=use_full_list,
+)
 
-tab_series, tab_map, tab_regression, tab_clustering = st.tabs(
-    ["Time Series", "Map", "Regression", "Clustering"]
+tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(
+    ["Time Series", "Map", "Regression", "Clustering", "Global Warming Trend"]
 )
 
 with tab_series:
-    fig = px.line(
-        subset, x="date", y="value", color="station_name",
-        title=f"{parameter} over time",
-    )
-    st.plotly_chart(fig, width="stretch")
+    time_series.render(ctx)
 
 with tab_map:
-    stations_meta = load_stations() if use_full_list else pd.DataFrame()
-    if stations_meta.empty:
-        st.caption("Enable 'Browse full DWD station list' in the sidebar to see station coordinates.")
-    else:
-        avg_value = subset.groupby("station_id", as_index=False)["value"].mean()
-        merged = stations_meta.merge(avg_value, on="station_id")
-        fig = px.scatter_map(
-            merged, lat="latitude", lon="longitude", size="value", color="value",
-            hover_name="name", zoom=4.5, map_style="open-street-map",
-            title=f"Mean {parameter} by station",
-        )
-        st.plotly_chart(fig, width="stretch")
+    map_view.render(ctx)
 
 with tab_regression:
-    station_for_trend = st.selectbox("Station", selected_names, key="trend_station")
-    station_id = id_by_name[station_for_trend]
-    trend_input = subset[subset["station_id"] == station_id]
-
-    if len(trend_input) < 2:
-        st.info("Not enough data points for a trend line.")
-    else:
-        result = fit_trend(trend_input)
-        st.write(f"Slope: {result['slope_per_day'] * 365:.4f} units/year")
-        fig = px.line(result["data"], x="date", y=["value", "trend"])
-        st.plotly_chart(fig, width="stretch")
+    regression.render(ctx)
 
 with tab_clustering:
-    n_clusters = st.slider("Number of clusters", 2, 6, 3)
-    per_station = subset.groupby("station_id", as_index=False)["value"].mean()
-    per_station["station_name"] = per_station["station_id"].map(id_to_name)
+    clustering.render(ctx)
 
-    if len(per_station) < n_clusters:
-        st.info("Select more stations than clusters to run KMeans.")
-    else:
-        clustered = cluster_stations(per_station, feature_cols=["value"], n_clusters=n_clusters)
-        fig = px.bar(
-            clustered.sort_values("value"), x="station_name", y="value", color="cluster",
-            title=f"Stations clustered by mean {parameter}",
-        )
-        st.plotly_chart(fig, width="stretch")
-        st.dataframe(clustered)
+with tab_global_warming:
+    global_warming.render(ctx)
