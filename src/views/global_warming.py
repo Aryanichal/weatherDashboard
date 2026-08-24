@@ -19,6 +19,13 @@ from src.data_loader import (
     load_long_run_data,
     load_station_metadata,
 )
+from src.forecasting import (
+    FORECAST_CACHE_VERSION,
+    HOT_DAYS_INDICATOR,
+    JULY_TEMPERATURE_INDICATOR,
+    PYTORCH_MODEL_NAME,
+    load_forecasts,
+)
 
 
 def _warn_about_missing_coverage(
@@ -57,6 +64,60 @@ def _warn_about_missing_coverage(
                 "(e.g. a wind-only airfield station) not a bug so its line "
                 "will be missing from those charts."
             )
+
+
+def _render_future_forecast(
+    city: str,
+    indicator: str,
+    y_label: str,
+    title: str,
+    forecasts: pd.DataFrame,
+    metrics: pd.DataFrame,
+    history: pd.DataFrame,
+) -> None:
+    """Render one observed series plus both model forecasts for a city."""
+    city_history = history.loc[(history["city"] == city) & (history["indicator"] == indicator)]
+    city_forecasts = forecasts.loc[(forecasts["city"] == city) & (forecasts["indicator"] == indicator)]
+    city_metrics = metrics.loc[(metrics["city"] == city) & (metrics["indicator"] == indicator)].copy()
+    forecast_fig = px.line(
+        city_history,
+        x="year",
+        y="observed_value",
+        markers=True,
+        labels={"year": "Year", "observed_value": y_label},
+        title=title,
+    )
+    forecast_fig.update_traces(name="Observed", line={"color": "#1f77b4"})
+    model_colours = {"Linear trend": "#d62728", PYTORCH_MODEL_NAME: "#2ca02c"}
+    for model_name, model_data in city_forecasts.groupby("model", sort=False):
+        model_data = model_data.sort_values("year")
+        colour = model_colours.get(model_name, "#444444")
+        rgb = ",".join(str(int(colour[index:index + 2], 16)) for index in (1, 3, 5))
+        forecast_fig.add_scatter(
+            x=model_data["year"], y=model_data["upper_80"], mode="lines",
+            line={"width": 0, "color": colour}, showlegend=False, hoverinfo="skip",
+        )
+        forecast_fig.add_scatter(
+            x=model_data["year"], y=model_data["lower_80"], mode="lines",
+            line={"width": 0, "color": colour}, fill="tonexty",
+            fillcolor=f"rgba({rgb},0.12)", name=f"{model_name} 80% interval", legendgroup=model_name,
+        )
+        forecast_fig.add_scatter(
+            x=model_data["year"], y=model_data["predicted_value"], mode="lines+markers",
+            line={"color": colour, "dash": "dash"}, name=f"{model_name} forecast", legendgroup=model_name,
+        )
+    st.plotly_chart(forecast_fig, width="stretch")
+
+    unit = city_metrics["unit"].iloc[0]
+    city_metrics[f"MAE ({unit})"] = city_metrics["mae"].map("{:.2f}".format)
+    city_metrics[f"RMSE ({unit})"] = city_metrics["rmse"].map("{:.2f}".format)
+    st.dataframe(
+        city_metrics[["model", "test_start_year", "test_end_year", f"MAE ({unit})", f"RMSE ({unit})"]].rename(
+            columns={"model": "Model", "test_start_year": "Test start", "test_end_year": "Test end"}
+        ),
+        hide_index=True,
+        width="stretch",
+    )
 
 
 def render(ctx: DashboardContext) -> None:
@@ -236,3 +297,30 @@ def render(ctx: DashboardContext) -> None:
         )
         st.plotly_chart(hot_days_fig, width="stretch")
         st.caption("The current year's hot-day count is year-to-date.")
+
+    st.divider()
+    st.subheader("Global Warming Future Trend Prediction")
+    st.caption(
+        "Both models forecast annual hot-day counts and average July temperatures, rather than the weather in a specific year. "
+        "The partial current year is excluded from model fitting."
+    )
+    try:
+        forecasts, forecast_metrics, forecast_history = load_forecasts(FORECAST_CACHE_VERSION)
+    except (ValueError, KeyError) as error:
+        st.error(f"Unable to prepare the future-trend forecast: {error}")
+        return
+
+    forecast_city = st.selectbox(
+        "Forecast city",
+        options=sorted(forecasts["city"].unique()),
+        key="future_trend_city",
+    )
+    _render_future_forecast(
+        forecast_city, HOT_DAYS_INDICATOR, "Days above 30 °C",
+        f"{forecast_city}: Hot Days Above 30 °C Forecast", forecasts, forecast_metrics, forecast_history,
+    )
+    st.subheader("Average July Temperature Future Prediction")
+    _render_future_forecast(
+        forecast_city, JULY_TEMPERATURE_INDICATOR, "Average July temperature (°C)",
+        f"{forecast_city}: Average July Temperature Forecast", forecasts, forecast_metrics, forecast_history,
+    )
