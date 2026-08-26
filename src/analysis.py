@@ -48,3 +48,19 @@ def cluster_stations(
     result = station_summary.loc[features.index].copy()
     result["cluster"] = labels.astype(str)
     return result
+
+def compute_headline_stats(raw: pd.DataFrame) -> dict[str, float | None]:
+    """Return the three summary numbers for whatever data is currently loaded.
+
+    Aggregates across every row currently in ``raw`` — i.e. all selected
+    stations and the selected date range, exactly as chosen in the sidebar.
+    """
+    def aggregate(parameter: str, how: str) -> float | None:
+        values = raw.loc[raw["parameter"] == parameter, "value"].dropna()
+        return float(getattr(values, how)()) if not values.empty else None
+
+    return {
+        "mean_temp_c": aggregate("temperature_air_mean_2m", "mean"),
+        "total_precip_mm": aggregate("precipitation_height", "sum"),
+        "max_wind_gust_ms": aggregate("wind_gust_max", "max"),
+    }
