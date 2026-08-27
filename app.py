@@ -26,24 +26,21 @@ DEFAULT_STATIONS = {
     "01443": "Freiburg",
 }
 
-with st.sidebar:
-    st.header("Selection")
+use_full_list = st.checkbox("Browse full DWD station list", value=False)
+if use_full_list:
+    stations_df = load_stations()
+    name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
+else:
+    name_by_id = DEFAULT_STATIONS
 
-    use_full_list = st.checkbox("Browse full DWD station list", value=False)
-    if use_full_list:
-        stations_df = load_stations()
-        name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
-    else:
-        name_by_id = DEFAULT_STATIONS
-
+selection_col, date_col = st.columns([2, 1])
+with selection_col:
     selected_names = st.multiselect(
         "Weather stations",
         options=list(name_by_id.values()),
         default=list(DEFAULT_STATIONS.values())[:2],
     )
-    id_by_name = {v: k for k, v in name_by_id.items()}
-    selected_ids = [id_by_name[n] for n in selected_names]
-
+with date_col:
     start_date, end_date = st.date_input(
         "Date range",
         value=(dt.date(2023, 1, 1), dt.date(2023, 12, 31)),
@@ -51,6 +48,11 @@ with st.sidebar:
         max_value=dt.date.today(),
         format="DD/MM/YYYY",
     )
+
+id_by_name = {v: k for k, v in name_by_id.items()}
+selected_ids = [id_by_name[n] for n in selected_names]
+
+st.divider()
 
 if not selected_ids:
     st.info("Select at least one station in the sidebar to load data.")
