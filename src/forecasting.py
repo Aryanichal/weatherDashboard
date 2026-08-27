@@ -6,7 +6,6 @@ trend, not the weather in a particular future year. Both fitted models are
 re-created from source data on each uncached run, so the exported CSV is
 reproducible and contains no opaque saved model binaries.
 """
-
 from datetime import UTC, datetime
 
 import numpy as np

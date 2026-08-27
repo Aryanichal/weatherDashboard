@@ -83,7 +83,6 @@ stat_col3.metric("Max wind gust", f"{stats['max_wind_gust_ms']:.1f} m/s" if stat
 tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(
     ["Time Series", "Map", "Regression", "Clustering", "Global Warming Trend"]
 )
-
 with tab_series:
     time_series.render(ctx)
 
