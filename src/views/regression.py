@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.analysis import fit_trend
 from src.dashboard_context import DashboardContext
-from src.ui_theme import style_fig
+from src.ui_theme import chart_card, render_chart
 from src.views.common import render_parameter_and_subset
 
 
@@ -23,4 +23,5 @@ def render(ctx: DashboardContext) -> None:
     st.write(f"Slope: {result['slope_per_day'] * 365:.4f} units/year")
     fig = px.line(result["data"], x="date", y=["value", "trend"])
     fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
-    st.plotly_chart(style_fig(fig), width="stretch")
+    with chart_card():
+        render_chart(fig)

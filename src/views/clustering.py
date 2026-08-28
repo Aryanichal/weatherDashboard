@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.analysis import cluster_stations
 from src.dashboard_context import DashboardContext
-from src.ui_theme import style_fig
+from src.ui_theme import chart_card, render_chart
 from src.views.common import render_parameter_and_subset
 
 
@@ -24,5 +24,6 @@ def render(ctx: DashboardContext) -> None:
         clustered.sort_values("value"), x="station_name", y="value", color="cluster",
         title=f"Stations clustered by mean {parameter}",
     )
-    st.plotly_chart(style_fig(fig), width="stretch")
+    with chart_card():
+        render_chart(fig)
     st.dataframe(clustered)

@@ -12,4 +12,3 @@ class DashboardContext:
     selected_names: list[str]
     id_by_name: dict[str, str]
     id_to_name: dict[str, str]
-    use_full_list: bool

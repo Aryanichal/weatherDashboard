@@ -10,44 +10,35 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_data, load_stations
-from src.ui_theme import render_weather_background
+from src.ui_theme import render_app_background, render_brand
 from src.views import clustering, global_warming, map_view, regression, time_series
 from src.analysis import compute_headline_stats
 from src.views.common import ACTIVE_PARAMETER_KEY
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
 
-st.session_state.setdefault(ACTIVE_PARAMETER_KEY, "temperature_air_mean_2m")
-render_weather_background(st.session_state[ACTIVE_PARAMETER_KEY])
+render_app_background()
+render_brand()
 
-st.title("Weather Dashboard")
-
-# A handful of well-known stations as a sensible default so the app is
-# usable immediately, without forcing a full station list download+scroll.
-DEFAULT_STATIONS = {
-    "00433": "Berlin-Tempelhof",
-    "01048": "Dresden-Klotzsche",
-    "03379": "Muenchen-Stadt",
-    "02014": "Hamburg-Fuhlsbuettel",
-    "01443": "Freiburg",
-}
+# A couple of well-known stations preselected so the app is usable
+# immediately, without the user having to search the full list first. Only
+# the IDs are hardcoded -- display names are always looked up from the
+# loaded station list below, so they match DWD's actual official spelling
+# instead of a hand-typed label going stale/wrong.
+DEFAULT_STATION_IDS = ["00433", "01048"]
 
 with st.sidebar:
     st.header("Selection")
 
-    use_full_list = st.checkbox("Browse full DWD station list", value=False)
-    if use_full_list:
-        stations_df = load_stations()
-        name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
-    else:
-        name_by_id = DEFAULT_STATIONS
+    stations_df = load_stations()
+    name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
+    id_by_name = {v: k for k, v in name_by_id.items()}
 
     selected_names = st.multiselect(
         "Weather stations",
         options=list(name_by_id.values()),
-        default=list(DEFAULT_STATIONS.values())[:2],
+        default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
     )
-    id_by_name = {v: k for k, v in name_by_id.items()}
     selected_ids = [id_by_name[n] for n in selected_names]
 
     start_date, end_date = st.date_input(
@@ -77,7 +68,6 @@ ctx = DashboardContext(
     selected_names=selected_names,
     id_by_name=id_by_name,
     id_to_name=id_to_name,
-    use_full_list=use_full_list,
 )
 stats = compute_headline_stats(raw)
 

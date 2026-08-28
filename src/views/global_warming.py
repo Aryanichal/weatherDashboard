@@ -8,7 +8,7 @@ import datetime as dt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from src.ui_theme import style_fig
+from src.ui_theme import chart_card, render_chart
 from src.dashboard_context import DashboardContext
 
 from src.data_loader import (
@@ -109,7 +109,8 @@ def _render_future_forecast(
             x=model_data["year"], y=model_data["predicted_value"], mode="lines+markers",
             line={"color": colour, "dash": "dash"}, name=f"{model_name} forecast", legendgroup=model_name,
         )
-    st.plotly_chart(forecast_fig, width="stretch")
+    with chart_card():
+        render_chart(forecast_fig)
 
     unit = city_metrics["unit"].iloc[0]
     city_metrics[f"MAE ({unit})"] = city_metrics["mae"].map("{:.2f}".format)
@@ -224,11 +225,12 @@ def render(ctx: DashboardContext) -> None:
             },
             title="Global Warming Trend",
         )
-        st.plotly_chart(style_fig(anomaly_fig), width="stretch")
-        st.caption(
-            f"Anomalies are relative to each city's {gw_baseline_start_year}–{gw_baseline_end_year} "
-            f"annual-mean-temperature baseline; {current_year} values are year-to-date."
-        )
+        with chart_card():
+            render_chart(anomaly_fig)
+            st.caption(
+                f"Anomalies are relative to each city's {gw_baseline_start_year}–{gw_baseline_end_year} "
+                f"annual-mean-temperature baseline; {current_year} values are year-to-date."
+            )
 
     hot_nights_col, heavy_rain_col = st.columns(2)
     with hot_nights_col:
@@ -248,7 +250,8 @@ def render(ctx: DashboardContext) -> None:
                 },
                 title="Hot Nights",
             )
-            st.plotly_chart(style_fig(hot_nights_fig), width="stretch")
+            with chart_card():
+                render_chart(hot_nights_fig)
     with heavy_rain_col:
         if heavy_rain_missing:
             st.info("No precipitation data is available for any selected station.")
@@ -266,7 +269,8 @@ def render(ctx: DashboardContext) -> None:
                 },
                 title="Heavy-Rain Days",
             )
-            st.plotly_chart(style_fig(heavy_rain_fig), width="stretch")
+            with chart_card():
+                render_chart(heavy_rain_fig)
 
     if long_run_missing:
         st.info(f"No {month_name} temperature data is available for any selected station.")
@@ -280,7 +284,8 @@ def render(ctx: DashboardContext) -> None:
             labels={"year": "Year", "observed_temp": f"Average {month_name} temperature (°C)", "city": "City"},
             title=f"Average {month_name} Temperature",
         )
-        st.plotly_chart(style_fig(temperature_fig), width="stretch")
+        with chart_card():
+            render_chart(temperature_fig)
 
     if hot_days_missing:
         st.info("No daytime maximum temperature data is available for any selected station.")
@@ -298,8 +303,9 @@ def render(ctx: DashboardContext) -> None:
             },
             title=f"Hot Days Above {gw_hot_day_threshold:g} °C",
         )
-        st.plotly_chart(style_fig(hot_days_fig), width="stretch")
-        st.caption("The current year's hot-day count is year-to-date.")
+        with chart_card():
+            render_chart(hot_days_fig)
+            st.caption("The current year's hot-day count is year-to-date.")
 
     st.divider()
     st.subheader("Global Warming Future Trend Prediction")
