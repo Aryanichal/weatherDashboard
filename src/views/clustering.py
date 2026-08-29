@@ -6,7 +6,7 @@ import streamlit as st
 from src.analysis import cluster_stations
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
-from src.views.common import render_parameter_and_subset
+from src.views.common import pretty_name, render_parameter_and_subset
 
 
 def render(ctx: DashboardContext) -> None:
@@ -20,10 +20,23 @@ def render(ctx: DashboardContext) -> None:
         return
 
     clustered = cluster_stations(per_station, feature_cols=["value"], n_clusters=n_clusters)
+    value_label = pretty_name(parameter)
     fig = px.bar(
         clustered.sort_values("value"), x="station_name", y="value", color="cluster",
-        title=f"Stations clustered by mean {parameter}",
+        title=f"Stations clustered by mean {value_label}",
+        labels={"value": value_label, "station_name": "Station", "cluster": "Cluster"},
     )
     with chart_card():
         render_chart(fig)
-    st.dataframe(clustered)
+    with chart_card():
+        st.dataframe(
+            clustered.rename(
+                columns={
+                    "station_id": "Station ID",
+                    "station_name": "Station",
+                    "value": value_label,
+                    "cluster": "Cluster",
+                }
+            ),
+            width="stretch",
+        )

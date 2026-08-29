@@ -6,7 +6,7 @@ import streamlit as st
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_stations
 from src.ui_theme import chart_card, render_chart
-from src.views.common import render_parameter_and_subset
+from src.views.common import pretty_name, render_parameter_and_subset
 
 
 def render(ctx: DashboardContext) -> None:
@@ -21,7 +21,8 @@ def render(ctx: DashboardContext) -> None:
     fig = px.scatter_map(
         merged, lat="latitude", lon="longitude", size="value", color="value",
         hover_name="name", zoom=4.5, map_style="open-street-map",
-        title=f"Mean {parameter} by station",
+        title=f"Mean {pretty_name(parameter)} by station",
+        labels={"value": pretty_name(parameter)},
     )
     with chart_card():
         render_chart(fig)

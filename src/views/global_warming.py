@@ -1,6 +1,11 @@
-"""Global Warming Trend tab: temperature anomaly, hot days/nights, and heavy-rain
-indicators for the selected cities, all driven by user-adjustable settings
-rather than fixed years/thresholds."""
+"""Discover Global Warming tab, split into two sub-tabs:
+
+- "Global Warming Trend": temperature anomaly, hot days/nights, and
+  heavy-rain indicators for the selected cities, all driven by
+  user-adjustable settings rather than fixed years/thresholds.
+- "Future Prediction": model-forecasted hot-day counts and average July
+  temperatures, independent of the trend tab's settings/station selection.
+"""
 
 import calendar
 import datetime as dt
@@ -115,16 +120,30 @@ def _render_future_forecast(
     unit = city_metrics["unit"].iloc[0]
     city_metrics[f"MAE ({unit})"] = city_metrics["mae"].map("{:.2f}".format)
     city_metrics[f"RMSE ({unit})"] = city_metrics["rmse"].map("{:.2f}".format)
-    st.dataframe(
-        city_metrics[["model", "test_start_year", "test_end_year", f"MAE ({unit})", f"RMSE ({unit})"]].rename(
-            columns={"model": "Model", "test_start_year": "Test start", "test_end_year": "Test end"}
-        ),
-        hide_index=True,
-        width="stretch",
-    )
+    with chart_card():
+        st.dataframe(
+            city_metrics[["model", "test_start_year", "test_end_year", f"MAE ({unit})", f"RMSE ({unit})"]].rename(
+                columns={"model": "Model", "test_start_year": "Test start", "test_end_year": "Test end"}
+            ),
+            hide_index=True,
+            width="stretch",
+        )
 
 
 def render(ctx: DashboardContext) -> None:
+    # Two sub-tabs, same st.tabs() component (and so the same styling) as
+    # the top-level "Discover Global Warming"/"Time Series"/etc. row this
+    # sits directly under -- trend charts (all driven by the settings
+    # expander below) in one, the independent forecast models in the
+    # other, rather than one long scroll mixing both kinds of content.
+    trend_tab, prediction_tab = st.tabs(["Global Warming Trend", "Future Prediction"])
+    with trend_tab:
+        _render_trend_tab(ctx)
+    with prediction_tab:
+        _render_prediction_tab()
+
+
+def _render_trend_tab(ctx: DashboardContext) -> None:
     city_stations = {name: ctx.id_by_name[name] for name in ctx.selected_names}
     current_year = dt.date.today().year
 
@@ -307,8 +326,8 @@ def render(ctx: DashboardContext) -> None:
             render_chart(hot_days_fig)
             st.caption("The current year's hot-day count is year-to-date.")
 
-    st.divider()
-    st.subheader("Global Warming Future Trend Prediction")
+
+def _render_prediction_tab() -> None:
     st.caption(
         "Both models forecast annual hot-day counts and average July temperatures, rather than the weather in a specific year. "
         "The partial current year is excluded from model fitting."

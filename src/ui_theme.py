@@ -45,34 +45,54 @@ import streamlit as st
 # cards -- reads as unmistakably blue rather than a hint of one.
 #
 # surface_container_lowest (inactive tab capsules, select/dropdown boxes,
-# expander, popovers, and -- after a couple of back-and-forths, see
-# chart_card()'s own comment further down -- the chart cards too now) has
-# gone through a few tunings chasing a "blends into the page" complaint.
-# First at ~98% lightness, matching real M3's tone-100
-# "brightest step", which looked like plain white and got brought down to
-# 94% -- but at 94% it was then too close to `surface` itself (93%) for
-# these small, page-level elements (a capsule/box, not a big card) to
-# read as popped rather than blended. Settled at 97.5% lightness with
-# saturation cut roughly in half (30% vs the ladder's usual ~46%) -- light
-# enough to read as "whiter, standing out" the way these smaller floating
-# elements need, while the reduced saturation (rather than pushing
-# lightness all the way to 100%) keeps a last whisper of the same blue
-# tint instead of opting out of the tonal system entirely.
+# expander, popovers, and the chart/graph cards) has gone through a few
+# tunings chasing a "blends into the page" complaint, then a "make the
+# charts more readable, whiter, glassier" one. First at ~98% lightness,
+# matching real M3's tone-100 "brightest step", which looked like plain
+# white and got brought down to 94% -- but at 94% it was too close to
+# `surface` itself for these elements to read as popped rather than
+# blended. 97.5% lightness / 30% saturation was the next step, used for a
+# while. Settled here at 98% lightness / 20% saturation -- whiter and
+# less blue than that, both for the chart cards specifically (more
+# separation between plotted data/text and the card behind it) and for
+# every other small floating element sharing this token, while the 20%
+# saturation still keeps a last whisper of the same blue tint rather than
+# opting out of the tonal system into flat white.
 #
-# surface_container_low (sidebar only now -- see chart_card()'s own
-# comment for why the chart cards moved off this role) was originally the
-# same ~47% saturation as the rest of the ladder, which read as too
-# strongly, distractingly blue for a fill this large. Cut to 35% (same
-# lightness/hue) for a calmer, more neutral panel that's still
-# recognizably part of the same blue-tinted system, just toned down
-# enough to stop fighting for attention with whatever's in front of it.
+# surface_container_low (now just the number-input boxes in the Global
+# Warming settings expander, since the sidebar moved to surface_container
+# and the chart cards moved to surface_container_lowest above -- see each
+# one's own comment) was originally the same ~47% saturation as the rest
+# of the ladder, which read as too strongly, distractingly blue for a
+# fill this large. Cut to 35% (same lightness/hue) for a calmer, more
+# neutral input fill that's still recognizably part of the same blue-tinted
+# system, just toned down enough to stop fighting for attention with
+# whatever's plotted on top of it.
+#
+# surface_container (sidebar only) is deliberately a *different*, poppier
+# tone from surface_container_low even though both sit at similar
+# lightness -- if the sidebar reused surface_container_low, it would land
+# so close to primary_container (the station-tag capsule fill) in
+# lightness/saturation that the tags would stop visually popping off the
+# panel behind them. Kept at the ladder's original ~47% saturation
+# instead (before the chart-card cut above) specifically so the panel
+# reads as its own confidently-blue surface rather than blending toward
+# either the calmer chart cards or the muted page canvas.
+# surface (page canvas) lightened/desaturated from its original
+# 93%-lightness/44%-saturation to 95%/30% -- reads noticeably closer to
+# white while keeping a visible blue tint, rather than the stronger wash
+# it started as. This is the outermost layer (.stApp's own background,
+# nothing rendered behind it), so literal alpha transparency wouldn't
+# have anything but the browser's default white canvas to blend against
+# anyway -- lightening/desaturating the flat color directly gets the same
+# "more white, still a little blue" result without the redundant blend.
 SURFACE = {
     "surface_dim": "#A8C0DC",
-    "surface": "#E5EDF5",
+    "surface": "#EEF2F6",
     "surface_bright": "#EEF3F9",
-    "surface_container_lowest": "#F7F8FB",
+    "surface_container_lowest": "#F9FAFB",
     "surface_container_low": "#D8E2EC",
-    "surface_container": "#CADAEC",
+    "surface_container": "#D5E2F0",
     "surface_container_high": "#BFD2E8",
     "surface_container_highest": "#B4CAE4",
     "on_surface": "#1C2A3B",
@@ -81,21 +101,50 @@ SURFACE = {
     "outline_variant": "#B7C6D7",
 }
 
-# The app's one accent color, as an M3 role *pair* rather than a single
-# hex: primary_container is the light, saturated blue fill (used for the
-# active-tab/station-tag capsules below), and on_primary_container is the
-# dark navy that M3's HCT algorithm targets to sit at standard contrast
-# (6.08:1, comfortably above AA 4.5:1) on top of that specific fill. An
-# earlier version of this file also kept a separate, hand-picked "primary"
-# ink color (#1565C0) for blue text/icons that aren't inside a filled
-# capsule -- wordmark, chart ink/gridlines, spinner text, focus rings,
-# modebar -- but that meant two different blues were both calling
-# themselves "the accent," which read as inconsistent. Every one of those
-# ink/icon uses now points at on_primary_container instead: the same dark
-# navy that already sits on the light-blue capsules, so "the accent" is
-# unambiguously one pair, used consistently whether it's filling a shape
-# or coloring text on top of a lighter surface.
+# The app's accent color(s): primary_container is the light, saturated
+# blue fill used for the station-tag capsules below, and
+# on_primary_container is the dark navy M3's HCT algorithm targets to sit
+# at standard contrast (6.08:1, comfortably above AA 4.5:1) *on top of
+# that specific fill* -- station tags, mainly, since the tabs no longer
+# have a filled background of their own to sit on.
+#
+# `primary` is a separate, hand-picked blue for text that sits directly on
+# a light SURFACE tone rather than on a filled capsule -- currently the
+# "WeatheRe" wordmark and the active tab (both label and sliding
+# indicator). A previous version pointed these at on_primary_container
+# too, for one single "the accent is this exact color everywhere" pair --
+# but on_primary_container is tuned dark specifically so text stays
+# legible sitting on the *light* primary_container fill; used instead as
+# freestanding text against this app's much lighter surface tones, it
+# read as too dark/near-black, clashing with the airier blue everywhere
+# else rather than feeling like the same accent.
+#
+# Went through two vivid, WCAG-AA-floor picks first (#1565C0, then
+# #166ACA at exactly 4.50:1 against the page -- the normal-text minimum)
+# that still read as too saturated/contrasty against how light
+# primary_container (the capsule fill, #A9CCF9) looks. Rather than push
+# lightness alone (which desaturates and looks washed-out/gray at the
+# extreme, the same issue SURFACE ran into earlier), this cuts saturation
+# roughly in half (80%->50%) *and* renders at 85% opacity wherever it's
+# used (color-mix against transparent, same technique the capsule
+# backgrounds use) so the page's own tint shows through slightly --
+# together those read as noticeably softer/lighter, closer to the
+# capsule's airiness, at the deliberate cost of dropping below AA's 4.5:1
+# floor (~3.7:1 against the page) -- acceptable here since this is
+# decorative brand/nav text, not body copy, and bold+large weight keeps
+# it legible in practice despite the lower contrast ratio.
+#
+# Hue nudged from 212° to 220° (same 55% saturation/55% lightness) for a
+# more "poppy," modern-M3-blue feel -- 212° leans toward cyan/steel, while
+# 220° reads as a richer, truer blue at the exact same saturation/
+# lightness numbers (this is a perceptual-vividness thing HSL doesn't
+# capture in the S value alone: how saturated a color *looks* at a given
+# S/L varies by hue). 240° is pure blue on this wheel, so nudging further
+# toward it (224°, 228°...) pushes further in the same "poppier" direction
+# if this still isn't vivid enough; back toward 200-205° goes the other
+# way, toward the steel/muted end.
 PRIMARY = {
+    "primary": "#4D77CB",
     "primary_container": "#A9CCF9",
     "on_primary_container": "#1E4469",
 }
@@ -145,7 +194,7 @@ _BASE_CSS = """
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 1000001;
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F9FAFB) 94%, transparent) !important;
     border: 1px solid color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 30%, transparent);
     border-radius: 16px;
     box-shadow: 0 12px 40px rgba(28, 42, 59, 0.18);
@@ -229,7 +278,7 @@ _BASE_CSS = """
        top (the negative margin-top above is what does that) while pushing
        the tabs row and everything under it down, instead of the two
        sitting almost flush against each other. */
-    margin-bottom: 1.5rem !important;
+    margin-bottom: 2.25rem !important;
     padding-top: 0 !important;
     line-height: 1 !important;
 }
@@ -259,66 +308,90 @@ _BASE_CSS = """
 }
 /* Tab labels ("Time Series", "Map", "Regression", "Clustering", "Global
    Warming Trend") default to font-weight 400 for both the active and
-   inactive tabs -- semi-bolded so the row reads as proper section
-   navigation without being as heavy as full bold. */
+   inactive tabs -- weight 500 (M3's own "titleSmall" tab-label weight,
+   medium rather than semibold/600) reads as more refined/modern than a
+   heavier weight, and is intentionally the *same* for active and
+   inactive: M3 relies on color plus the indicator bar to show what's
+   selected, not extra boldness on top, so weight doesn't need to (and
+   per that same principle, shouldn't) change between the two states.
+   Also bumped up from Streamlit's default 14px to read a bit more
+   prominent as primary page navigation rather than blending in at
+   body-text size. Color: standard M3 tab convention is active = the
+   accent color, inactive = the muted on_surface_variant tone (not
+   Streamlit's own near-black default, rgb(38,39,48), which read as
+   borderline-black and didn't match this app's blue-tinted palette at
+   all) -- so inactive tabs still recede properly relative to the active
+   one (see [aria-selected="true"] below, further down, for that
+   override) while staying blue-tinted like everything else. */
 [data-testid="stTab"] p {
-    font-weight: 600 !important;
+    font-weight: 500 !important;
+    font-size: 1rem !important;
+    color: var(--m3-on-surface-variant, #52657A) !important;
 }
-/* Segmented-control look: the active tab sits in its own white rounded
-   capsule (shadow to match the "popped" look used elsewhere) instead of
-   Streamlit's default underline-only indicator. Confirmed via DevTools
-   that the sliding underline bar is a separate element,
-   `.react-aria-SelectionIndicator` (not a border/box-shadow on the tab
-   itself, which is why it needed hiding rather than overriding one
-   property) -- the white capsule below replaces it as the selection cue
-   instead of stacking both. No track background and no divider line under
-   the row -- there's a bare, already-hidden <hr> in here too (unrelated,
-   left alone), but the actual visible 2px divider turned out to be a
-   `::after` pseudo-element on the tablist itself (content:"", height:2px,
-   a light-grey background) -- confirmed by walking pixel-by-pixel with
-   elementFromPoint since it doesn't show up as a border/box-shadow on any
-   element's own computed style, only on its generated ::after. */
+/* M3-style text tab row: a faint rule under the *whole* row (a track,
+   like an unfilled progress bar) plus a per-tab sliding indicator bar
+   that only actually renders under the active tab and moves to the newly
+   active one (confirmed via DevTools this is a real, single DOM element,
+   `.react-aria-SelectionIndicator`, that React Aria itself
+   mounts/animates -- not something this file needs to position or
+   transition by hand, only recolor). This replaces the segmented-control/
+   capsule look this used to have (each tab in its own filled pill), which
+   read as too heavy/button-like for page navigation.
+
+   `[role="tablist"]`'s own `::after` pseudo-element (content:"",
+   height:2px by default) is the row-wide track; it used to be hidden
+   entirely (`display: none`) to make room for the capsule look, and the
+   indicator was hidden alongside it since two separate moving/colored
+   cues would have doubled up with the capsule. Un-hiding both now that
+   the capsules are gone: the track at low opacity (a subtle line the
+   active indicator sits on top of, not a strong divider competing with
+   it), the indicator at full accent color as the actual "this one is
+   selected" cue.
+
+   Thickness follows M3's own Primary Tabs spec (divider ~1dp, active
+   indicator ~3dp) rather than the 2px both defaulted to -- the active
+   indicator being visibly heavier than the row's own baseline track is
+   what reinforces "this one is heavier/more emphasized" on top of the
+   color difference already doing that job; same height on both would've
+   left color as the only cue. */
 [role="tablist"] {
     display: inline-flex;
-    gap: 0.25rem;
+    gap: 1.5rem;
 }
 [data-testid="stTabs"] hr {
     display: none;
 }
 [role="tablist"]::after {
-    display: none !important;
+    height: 1px !important;
+    background: color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 45%, transparent) !important;
 }
 [role="tablist"] .react-aria-SelectionIndicator {
-    display: none;
+    height: 3px !important;
+    background: color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent) !important;
 }
-/* Every tab is always a white capsule; the active one swaps to the M3
-   primary-container/on-primary-container pair (standard-contrast filled
-   accent, see PRIMARY above -- a light, saturated blue with dark text
-   rather than a dark fill with white text) instead of just gaining a
-   shadow, so the row reads as a proper on/off toggle rather than
-   "selected = slightly raised". */
 [data-testid="stTab"] {
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
-    border-radius: 999px !important;
-    padding: 0.4rem 1rem !important;
-    box-shadow: 0 2px 8px rgba(28, 42, 59, 0.12);
-    transition: background-color 0.15s ease, box-shadow 0.15s ease;
-}
-[data-testid="stTab"][aria-selected="true"] {
-    background: color-mix(in srgb, var(--m3-primary-container, #A9CCF9) 94%, transparent) !important;
+    background: transparent !important;
+    padding: 0.4rem 0.1rem !important;
+    transition: color 0.15s ease;
 }
 [data-testid="stTab"][aria-selected="true"] p {
-    color: var(--m3-on-primary-container, #1E4469) !important;
+    color: color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent) !important;
 }
-/* One step down the SURFACE ladder from the page canvas -- a visibly
-   blue-tinted panel (see SURFACE above), not a neutral gray one, so it
-   reads as its own "colored panel" without competing with the white cards
-   in the main content area. The margin is what lets the rounded corners
-   and shadow actually read against the page instead of being clipped by
-   the viewport edge. Being a light fill, widget text/labels below are
-   flipped to a dark neutral instead of white for contrast. */
+/* A visibly blue-tinted panel (see SURFACE above), not a neutral gray
+   one, so it reads as its own "colored panel" without competing with the
+   cards in the main content area. Uses surface_container specifically --
+   not surface_container_low, which the chart cards use -- kept at a
+   higher, poppier saturation (~47% vs the cards' 35%) so the sidebar
+   reads as a confidently blue panel of its own rather than echoing the
+   calmer card tone; also keeps it visually distinct from
+   primary_container (the station-tag capsule fill) so those tags still
+   pop forward off the panel instead of blending into it. The margin is
+   what lets the rounded corners and shadow actually read against the
+   page instead of being clipped by the viewport edge. Being a light
+   fill, widget text/labels below are flipped to a dark neutral instead
+   of white for contrast. */
 [data-testid="stSidebar"] {
-    background: var(--m3-surface-container-low, #D8E2EC);
+    background: var(--m3-surface-container, #D5E2F0);
     margin: 0.25rem 0 0.25rem 1rem;
     border-radius: 20px;
     border: 1px solid color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 40%, transparent);
@@ -352,7 +425,11 @@ _BASE_CSS = """
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3,
 [data-testid="stSidebar"] span:not([data-baseweb="tag"] *):not([data-testid="stDateInput"] [data-baseweb="input"] *):not([data-rac]) {
-    color: var(--m3-on-surface, #1C2A3B) !important;
+    /* on_surface (#1C2A3B) was near-black -- same complaint as the old
+       inactive-tab color -- so this uses on_surface_variant instead, the
+       same muted blue-gray tone inactive tabs now use, for the same
+       "still legible, but blue-tinted rather than borderline-black" reason. */
+    color: var(--m3-on-surface-variant, #52657A) !important;
 }
 /* "Date range" label specifically called out heavier than the rest. */
 [data-testid="stDateInput"] label {
@@ -395,17 +472,56 @@ _BASE_CSS = """
 
 /* Card look for chart_card()'s st.container(border=True) wrapper: no
    border, and a soft shadow instead of Streamlit's default flat
-   grey-bordered box. Background is surface_container_lowest -- the same
-   whiter, lower-saturation tone the select boxes/expander/popovers below
-   use. This went through container_low (one step darker, same tone the
-   sidebar uses) first, which fixed an earlier "blends into the page"
-   complaint, but that tone then read as too strongly blue over an area
-   this large -- a chart's own data (lines, bars, points) needs to be the
-   thing that pops, not the card behind it. container_lowest keeps the
-   same separation from the page canvas (it was re-tuned lighter for
-   exactly that "stand out, but read as white/light rather than blue"
-   need -- see the SURFACE comment above) while being calm enough not to
-   compete with whatever's actually plotted on top of it.
+   grey-bordered box. Confirmed via DevTools that every chart_card() across
+   every tab (Time Series, Map, Regression, Clustering, both Discover
+   Global Warming sub-tabs, and the forecast-metrics tables) reads this
+   one shared rule, so any change here applies everywhere at once;
+   there's no per-tab styling to have drifted.
+
+   Background is a *nested* color-mix(): white mixed with a small amount
+   of surface_container_low (80%/20%) to get a base tone that's mostly
+   white with just a hint of the app's blue, then that whole result mixed
+   with transparent at 80% opacity for the actual glass translucency.
+   This two-step mix is what earlier single-step attempts couldn't get
+   right together: surface_container_lowest pushed toward near-white
+   (20% saturation) read as plain opaque white with no visible tint at
+   any opacity, since blending an already near-white *base* color still
+   just gives near-white; primary_container (87% saturation, the same
+   blue as the capsules) at 40% opacity read as genuinely glassy but too
+   blue -- alpha blending doesn't reduce HSL saturation the way you'd
+   expect, so even diluted it still measured well above the sidebar's own
+   47% saturation; plain surface_container_low at 50% opacity fixed the
+   too-blue problem but then read too close to the page to stand out as
+   its own card. Mixing toward white *first*, before applying the
+   translucency, is what actually gets "majority white, a little blue
+   tint, still see-through" all at once -- the 80% opacity keeps it from
+   diluting all the way back down to the very pale page color the way a
+   lower opacity did, while the small 20% blue slice keeps it from being
+   flatly white with zero tint. Still measures ~9.4:1 text contrast for
+   the dark on_primary_container ink used elsewhere in charts (title,
+   axis, tick labels).
+
+   Rendered "glassy" via three things together, not blur alone -- a flat
+   solid-color page behind this card has no texture for a blur to
+   visibly act on, so backdrop-filter by itself would be nearly
+   imperceptible here:
+     1. Real (if higher than most other elements in this file) opacity --
+        80%, mixed toward white as described above rather than the ~94%
+        solid tint every other card/capsule uses -- so a little of the
+        page still shows through underneath the mostly-white tone.
+     2. backdrop-filter blur+saturate, still included for when this *is*
+        rendered over something with texture (e.g. content scrolled
+        partly behind it) and for the saturate boost, which has a small
+        but real effect even over a flat color.
+     3. A soft diagonal light-to-transparent gradient layered on top of
+        the translucent color-mix() fill, plus a slightly lighter
+        semi-transparent top/left border -- these two are what actually
+        sell "glass" regardless of what's behind the card, the same way
+        real glassmorphism recipes lean on a highlight/sheen rather than
+        blur alone to read as glass.
+   backdrop-filter needs the -webkit- prefix for Safari; browsers without
+   support for it at all still get the gradient/border sheen plus the
+   flat translucent background, which reads correctly on its own.
 
    This needs TWO selectors because Streamlit restructured how border=True
    containers reach the DOM somewhere between 1.37 and 1.62 (confirmed by
@@ -444,8 +560,12 @@ _BASE_CSS = """
    order -- that's the actual fix there, not the !important alone. */
 [data-testid="stVerticalBlockBorderWrapper"][data-testid="stVerticalBlockBorderWrapper"]:not([data-testid="stAppViewBlockContainer"] > *),
 [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
-    border: none !important;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+        color-mix(in srgb, color-mix(in srgb, white 80%, var(--m3-surface-container-low, #D8E2EC) 20%) 80%, transparent) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
     outline: none !important;
     border-radius: 24px !important;
     box-shadow: 0 12px 32px rgba(28, 42, 59, 0.16) !important;
@@ -479,7 +599,7 @@ _BASE_CSS = """
 [data-testid="stSelectbox"] [data-baseweb="select"],
 [data-testid="stMultiSelect"] [role="group"][data-rac],
 [data-testid="stSelectbox"] [role="group"][data-rac] {
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F9FAFB) 94%, transparent) !important;
     border: none !important;
     outline: none !important;
     border-radius: 10px !important;
@@ -505,20 +625,33 @@ _BASE_CSS = """
    grey, `rgb(240, 242, 246)` -- confirmed via DevTools that the actual
    colored box is [data-testid="stNumberInputContainer"], one level inside
    the outer [data-testid="stNumberInput"] wrapper (which is itself
-   transparent). Given the same primary_container/on_primary_container
-   pair as every other capsule/chip in this file (active tab, station
-   tags, wordmark) instead, rather than leaving these as the one place
-   still using an unstyled native gray -- text color has to be set on the
-   input field *and* both step buttons separately since Streamlit renders
-   the -/+ glyphs as a separate <button><svg> pair whose fill inherits
-   `color` from here, not from the container. */
+   transparent). This first went through primary_container/
+   on_primary_container -- the same accent pair as the capsules/chips
+   (active tab, station tags) -- but a plain data-entry field isn't an
+   actionable/selected element the way those are, and M3 reserves
+   primary/primary_container for exactly that: filled buttons, chips,
+   selected states, not passive input surfaces. Moved to
+   surface_container_low/on_surface_variant instead -- the SURFACE
+   system's own container role (also what the sidebar uses), at roughly
+   half primary_container's saturation (35% vs 87%) and noticeably
+   lighter (89% vs 82% lightness), which is both more semantically
+   correct and reads as calmer against the rest of the now-toned-down
+   UI. Also dropped to 60% opacity (vs. the 94% every other capsule/box in
+   this file uses) for a distinctly more transparent, recessed feel
+   appropriate to a plain input rather than an accent surface -- still
+   comfortably legible (on_surface_variant measures ~4.6:1 against the
+   page-blended result, clearing WCAG AA's 4.5:1 for normal text). Text
+   color has to be set on the input field *and* both step buttons
+   separately since Streamlit renders the -/+ glyphs as a separate
+   <button><svg> pair whose fill inherits `color` from here, not from the
+   container. */
 [data-testid="stNumberInputContainer"] {
-    background: color-mix(in srgb, var(--m3-primary-container, #A9CCF9) 94%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-surface-container-low, #D8E2EC) 60%, transparent) !important;
 }
 [data-testid="stNumberInputField"],
 [data-testid="stNumberInputStepDown"],
 [data-testid="stNumberInputStepUp"] {
-    color: var(--m3-on-primary-container, #1E4469) !important;
+    color: var(--m3-on-surface-variant, #52657A) !important;
 }
 /* Focus falls on an element nested inside the box, not the box itself, so
    :focus-within on the wrapper is what catches "this control is active"
@@ -543,7 +676,7 @@ _BASE_CSS = """
    `rgb(248,249,251)`, as a native "this section is active" highlight) --
    testing only the collapsed state missed this the first time around. */
 [data-testid="stExpander"] details {
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F9FAFB) 94%, transparent) !important;
     border: none !important;
     border-radius: 10px !important;
     box-shadow: 0 4px 14px rgba(28, 42, 59, 0.12) !important;
@@ -556,7 +689,7 @@ _BASE_CSS = """
    hard-edged white box. The date-input's calendar popover is left alone
    (native), same as the date box itself. */
 [data-baseweb="menu"] {
-    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F9FAFB) 94%, transparent) !important;
     border-radius: 10px !important;
     overflow: hidden;
     box-shadow: 0 8px 24px rgba(28, 42, 59, 0.12) !important;
@@ -597,22 +730,26 @@ def render_app_background() -> None:
 
 
 def render_brand() -> None:
-    """Render the "WeatheRe" wordmark as plain text in on_primary_container
-    -- the same dark-navy ink used for chart text and for text sitting on
-    top of the primary_container capsules elsewhere (active tab, station
-    tags, number-input boxes), so it still reads as "the accent" without a
-    filled pill/chip behind it. Rendered at the top-left of the main
-    content area, immediately next to the sidebar -- this replaces the old
-    st.title("Weather Dashboard"). Deliberately normal document flow
-    rather than position: fixed to a hardcoded coordinate: an in-flow
-    element at the top of .block-container sits right at the sidebar's
-    edge and automatically shifts left with .main when the sidebar is
-    collapsed, which a fixed position could not do without JS to track
-    sidebar state."""
+    """Render the "WeatheRe" wordmark as plain text in `primary` at 85%
+    opacity -- the same softened blue used for the active tab (label +
+    sliding indicator), since both are freestanding text on a light
+    SURFACE tone rather than text sitting on a filled capsule (that's
+    what on_primary_container is for, see the PRIMARY comment above). The
+    opacity is inline here (color-mix works fine as a plain CSS color
+    value, including in an inline style attribute) rather than only in
+    the stylesheet, since this element's color is set via inline style,
+    not a class this file's CSS block can target. Rendered at the
+    top-left of the main content area, immediately next to the sidebar --
+    this replaces the old st.title("Weather Dashboard"). Deliberately
+    normal document flow rather than position: fixed to a hardcoded
+    coordinate: an in-flow element at the top of .block-container sits
+    right at the sidebar's edge and automatically shifts left with .main
+    when the sidebar is collapsed, which a fixed position could not do
+    without JS to track sidebar state."""
     st.markdown(
         f'<div class="app-brand" style="text-align: left; font-weight: 700; '
         f'font-size: 1.6rem; letter-spacing: 0.02em; '
-        f'color: {PRIMARY["on_primary_container"]};">WeatheRe</div>',
+        f'color: color-mix(in srgb, {PRIMARY["primary"]} 85%, transparent);">WeatheRe</div>',
         unsafe_allow_html=True,
     )
 
@@ -628,14 +765,26 @@ def chart_card():
 
 
 # on_primary_container (the same accent ink used everywhere else, see the
-# PRIMARY comment above) for text/gridlines -- reads fine over the tinted
-# chart_card() background regardless of which weather mood is active, since
-# only the page background (not the accent/ink) changes with the mood.
-# _CHART_GRID is the same color as an rgb() triple (#1E4469 =
-# rgb(30,68,105)) at low opacity, since Plotly's gridcolor/zerolinecolor/
-# linecolor options don't accept CSS custom properties.
+# PRIMARY comment above) for axis/tick/legend text and gridlines -- reads
+# fine over the tinted chart_card() background regardless of which weather
+# mood is active, since only the page background (not the accent/ink)
+# changes with the mood. _CHART_GRID is the same color as an rgb() triple
+# (#1E4469 = rgb(30,68,105)) at low opacity, since Plotly's gridcolor/
+# zerolinecolor/linecolor options don't accept CSS custom properties.
 _CHART_INK = PRIMARY["on_primary_container"]
 _CHART_GRID = "rgba(30, 68, 105, 0.12)"
+
+# Each chart's own headline title (e.g. "Cloud Cover Total over time") --
+# kept as its own color, separate from _CHART_INK above, so it matches
+# the "WeatheRe" wordmark and active-tab text exactly (same PRIMARY
+# "primary" ink, same 85% opacity) rather than the darker
+# on_primary_container everything else in a chart (axis titles, tick
+# labels, legend) still uses. Plotly's font-color options don't accept
+# CSS custom properties or color-mix(), so the 85%-opacity blend that's
+# `color-mix(in srgb, ... 85%, transparent)` in CSS has to be spelled out
+# here as a literal rgba() alpha instead -- same PRIMARY["primary"] hex
+# (#4D77CB = rgb(77,119,203)), same 0.85 alpha.
+_CHART_TITLE_COLOR = "rgba(77, 119, 203, 0.85)"
 
 
 def style_fig(fig: go.Figure) -> go.Figure:
@@ -645,7 +794,7 @@ def style_fig(fig: go.Figure) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font_color=_CHART_INK,
-        title_font_color=_CHART_INK,
+        title_font_color=_CHART_TITLE_COLOR,
         # font_color above only sets the *fallback* Plotly text color --
         # Streamlit's own default chart template sets its own explicit,
         # much lighter gray (confirmed via DevTools: rgb(128,132,149)) on
