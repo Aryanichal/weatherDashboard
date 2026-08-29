@@ -10,7 +10,7 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_data, load_stations
-from src.ui_theme import render_app_background, render_brand
+from src.ui_theme import apply_dynamic_theme, render_app_background, render_brand
 from src.views import clustering, global_warming, map_view, regression, time_series
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
@@ -84,5 +84,11 @@ with tab_clustering:
 
 with tab_global_warming:
     global_warming.render(ctx)
+
+# Re-themes the whole page (background, sidebar, brand, tabs, ...) to
+# whichever tab's "Parameter" dropdown the user most recently changed --
+# see apply_dynamic_theme()'s docstring for why this has to run after
+# every tab above rather than once at the top.
+apply_dynamic_theme(st.session_state.get("active_theme_parameter"))
 
 

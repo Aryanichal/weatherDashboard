@@ -68,6 +68,36 @@ PARAMETER_UNITS = {
 HOT_DAY_TEMPERATURE_PARAMETER = "temperature_air_max_2m"
 HOT_DAY_THRESHOLD_C = 30.0
 
+PARAMETER_COLOR_CATEGORY = {
+    "temperature_air_max_2m": "temperature",
+    "temperature_air_mean_2m": "temperature",
+    "temperature_air_min_2m": "temperature",
+    "temperature_air_min_0_05m": "temperature",
+    "sunshine_duration": "temperature",
+    "precipitation_height": "precipitation",
+    "precipitation_form": "precipitation",
+    "humidity": "precipitation",
+    "pressure_vapor": "precipitation",
+    "cloud_cover_total": "neutral",
+    "snow_depth": "neutral",
+    "wind_gust_max": "neutral",
+    "wind_speed": "neutral",
+    "pressure_air_site": "neutral",
+}
+
+
+def categorize_parameter(parameter: str) -> str:
+    """Map a DWD parameter to one of the three Key Figures color categories
+    (see ACCENT_HEX_BY_CATEGORY in ui_theme.py): "temperature" (warm/yellow),
+    "precipitation" (the app's default blue), or "neutral" (unsaturated
+    gray) for cloud cover/snow/wind/pressure, none of which read as clearly
+    warm or wet. sunshine_duration is grouped with temperature (both signal
+    warm weather); humidity and vapor pressure are grouped with
+    precipitation (both are moisture measures). Unrecognized parameters
+    default to "neutral" rather than raising, since this only controls a
+    color and a future DWD parameter shouldn't break the toolbar."""
+    return PARAMETER_COLOR_CATEGORY.get(parameter, "neutral")
+
 
 def compute_parameter_stats(subset: pd.DataFrame, parameter: str) -> dict[str, float | int | str | None]:
     """Return min/mean/max/mode plus one parameter-aware "total" figure for

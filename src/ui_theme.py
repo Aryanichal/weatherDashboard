@@ -1,5 +1,9 @@
+import colorsys
+
 import plotly.graph_objects as go
 import streamlit as st
+
+from src.analysis import categorize_parameter
 
 SURFACE = {
     "surface": "#EEF2F6",
@@ -15,6 +19,42 @@ PRIMARY = {
     "primary_container": "#A9CCF9",
     "on_primary_container": "#1E4469",
 }
+
+def _with_hue(hex_color: str, hue_degrees: float | None, saturation: float | None = None) -> str:
+    """Return ``hex_color`` with its hue (and optionally saturation)
+    replaced, keeping its own lightness -- and, unless overridden, its own
+    saturation -- untouched. Used to derive a whole category's palette from
+    the app's default blue one token-by-token, so every derived color keeps
+    the exact same HSL "recipe" (same S, same L) as its blue counterpart,
+    only the hue rotates (or, for "neutral", saturation drops to 0)."""
+    r, g, b = (int(hex_color[i : i + 2], 16) / 255 for i in (1, 3, 5))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    h = h if hue_degrees is None else hue_degrees / 360
+    s = s if saturation is None else saturation
+    r, g, b = colorsys.hls_to_rgb(h, l, s)
+    return "#{:02X}{:02X}{:02X}".format(round(r * 255), round(g * 255), round(b * 255))
+
+
+# Every SURFACE/PRIMARY token shares one blue hue (~210-220 deg) at its own
+# individual saturation/lightness -- confirmed via colorsys.rgb_to_hls on
+# each hex above. That means a whole alternate-hue theme can be derived
+# token-by-token from this one, rather than hand-picking new colors per
+# token: "temperature" rotates every token to the same warm gold hue (48),
+# "neutral" desaturates every token to 0% (same lightness, no hue), and
+# "precipitation" is just the existing blue set, unmodified. Every derived
+# color therefore sits at the *same* saturation/lightness as its blue
+# counterpart -- never more, never less, per this feature's own ask.
+_THEME_TOKENS = {**SURFACE, **PRIMARY}
+
+PALETTES_BY_CATEGORY = {
+    "precipitation": dict(_THEME_TOKENS),
+    "temperature": {name: _with_hue(hexval, hue_degrees=48) for name, hexval in _THEME_TOKENS.items()},
+    "neutral": {name: _with_hue(hexval, hue_degrees=None, saturation=0.0) for name, hexval in _THEME_TOKENS.items()},
+}
+
+# Key Figures toolbar accent per src.analysis.categorize_parameter() --
+# just the "primary" token out of each category's full palette above.
+ACCENT_HEX_BY_CATEGORY = {category: palette["primary"] for category, palette in PALETTES_BY_CATEGORY.items()}
 
 
 _BASE_CSS = """
@@ -233,12 +273,7 @@ _BASE_CSS = """
     background: color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 12%, transparent) !important;
     border-radius: 6px !important;
 }
-[data-testid="stMetricLabel"] p,
-[data-testid="stMetricValue"] {
-    color: color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent) !important;
-}
 [data-testid="stVerticalBlock"][class*="-stat-accent"] {
-    background: color-mix(in srgb, var(--m3-primary, #4D77CB) 80%, white) !important;
     border: none !important;
 }
 [class*="-stat-accent"] [data-testid="stMetricLabel"] p,
@@ -260,25 +295,54 @@ _BASE_CSS = """
 </style>
 """
 
-_BACKGROUND_COLOR = SURFACE["surface"]
+def _render_theme_vars(palette: dict[str, str]) -> None:
+    css_vars = " ".join(f'--m3-{role.replace("_", "-")}: {hex_value};' for role, hex_value in palette.items())
+    st.markdown(
+        f'<style>.stApp {{ background: {palette["surface"]}; }}'
+        f' :root {{ {css_vars} }}</style>',
+        unsafe_allow_html=True,
+    )
 
 
 def render_app_background() -> None:
     st.markdown(_BASE_CSS, unsafe_allow_html=True)
-    tokens = {**SURFACE, **PRIMARY}
-    css_vars = " ".join(f'--m3-{role.replace("_", "-")}: {hex_value};' for role, hex_value in tokens.items())
-    st.markdown(
-        f'<style>.stApp {{ background: {_BACKGROUND_COLOR}; }}'
-        f' :root {{ {css_vars} }}</style>',
-        unsafe_allow_html=True,
-    )
+    _render_theme_vars(PALETTES_BY_CATEGORY["precipitation"])
+
+
+def apply_dynamic_theme(parameter: str | None) -> None:
+    """Re-assert every --m3-* custom property (and .stApp's background)
+    using the color category of ``parameter`` (see categorize_parameter()
+    in src/analysis.py), overriding the default blue palette
+    render_app_background() painted at the top of the script.
+
+    CSS custom properties on :root apply document-wide regardless of where
+    in the page's source their defining <style> tag sits, and the later of
+    two equal-specificity :root rules wins -- so calling this once, after
+    every tab (and so every "Parameter" dropdown) has rendered, is enough
+    to re-theme the sidebar, page background, brand text, tabs, and every
+    other var()-driven color in one shot. It intentionally doesn't touch
+    Plotly chart colors (style_fig() in this module) -- those are baked
+    into each figure as literal RGB values at build time, not read from
+    CSS, and were deliberately kept on a fixed colorblind-friendly palette
+    per earlier feedback on this dashboard.
+
+    ``parameter`` is whichever of the several independent per-tab
+    "Parameter" dropdowns the user most recently changed (tracked in
+    st.session_state by render_parameter_and_subset() in
+    src/views/common.py) -- there's no single "current" parameter since
+    every tab keeps its own selection, so this app-wide theme follows
+    whichever one was touched last, defaulting to "neutral" (this app's
+    every dropdown defaults to the alphabetically-first parameter, which
+    is "Cloud Cover Total") before the user has touched any of them."""
+    category = categorize_parameter(parameter) if parameter else "neutral"
+    _render_theme_vars(PALETTES_BY_CATEGORY[category])
 
 
 def render_brand() -> None:
     st.markdown(
         f'<div class="app-brand" style="text-align: left; font-weight: 700; '
         f'font-size: 1.6rem; letter-spacing: 0.02em; '
-        f'color: color-mix(in srgb, {PRIMARY["primary"]} 85%, transparent);">WeatheRe</div>',
+        f'color: color-mix(in srgb, var(--m3-primary, {PRIMARY["primary"]}) 85%, transparent);">WeatheRe</div>',
         unsafe_allow_html=True,
     )
 
@@ -290,7 +354,22 @@ def chart_card():
 _CHART_INK = PRIMARY["on_primary_container"]
 _CHART_GRID = "rgba(30, 68, 105, 0.12)"
 
-_CHART_TITLE_COLOR = "rgba(77, 119, 203, 0.85)"
+
+def _current_chart_title_color() -> str:
+    """The chart title ("heading") color for whatever category the app-wide
+    dynamic theme (see apply_dynamic_theme()) is currently on -- read from
+    the same st.session_state["active_theme_parameter"] that theme uses, so
+    a chart's own heading always matches the background/sidebar/Key Figures
+    color it's currently sitting in. Only the *title* follows the theme;
+    axis ticks/gridlines/legend text and the data lines themselves
+    (_CHART_INK/_CHART_GRID, and each view's own px.line/... colors) stay
+    fixed, per this dashboard's earlier colorblind-accessibility feedback
+    on those specific elements."""
+    parameter = st.session_state.get("active_theme_parameter")
+    category = categorize_parameter(parameter) if parameter else "neutral"
+    hex_color = ACCENT_HEX_BY_CATEGORY[category]
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    return f"rgba({r},{g},{b},0.85)"
 
 
 def style_fig(fig: go.Figure) -> go.Figure:
@@ -298,7 +377,7 @@ def style_fig(fig: go.Figure) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font_color=_CHART_INK,
-        title_font_color=_CHART_TITLE_COLOR,
+        title_font_color=_current_chart_title_color(),
         legend=dict(bgcolor="rgba(0,0,0,0)", font_color=_CHART_INK),
         margin=dict(t=60, b=50, l=40, r=40),
         modebar=dict(bgcolor="rgba(0,0,0,0)", color="#90A4AE", activecolor=PRIMARY["on_primary_container"]),

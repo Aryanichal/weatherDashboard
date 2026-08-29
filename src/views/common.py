@@ -3,7 +3,8 @@
 import pandas as pd
 import streamlit as st
 
-from src.analysis import compute_parameter_stats
+from src.analysis import categorize_parameter, compute_parameter_stats
+from src.ui_theme import ACCENT_HEX_BY_CATEGORY
 
 
 def pretty_name(parameter: str) -> str:
@@ -58,15 +59,30 @@ def render_stats_toolbar(subset: pd.DataFrame, parameter: str, key_prefix: str) 
     for a given parameter (it isn't always a sum).
 
     The 1st/3rd/5th boxes (Min, Max, Total) get the "stat-accent" marker
-    class -- solid WeatheRe-blue background, white text -- while the 2nd/4th
-    (Mean, Mode) get "stat-plain" and keep the default white chart-card
-    look; see the "[class*=...]" rules in ui_theme.py for what each class
-    triggers. ``key_prefix`` must be unique per calling tab (Streamlit
-    requires unique widget/container keys app-wide) -- callers pass their
-    own selectbox key, which is already unique per tab."""
+    class -- solid background, white text -- while the 2nd/4th (Mean, Mode)
+    get "stat-plain" and keep the white chart-card look with tinted text;
+    see the "[class*=...]" rules in ui_theme.py for the category-independent
+    structure (padding, font size, white text on accent) each class
+    triggers. The *color* itself follows the same app-wide "active theme"
+    parameter as apply_dynamic_theme() in src/ui_theme.py (whichever tab's
+    "Parameter" dropdown was most recently changed) rather than this call's
+    own ``parameter`` -- otherwise switching to a tab whose own dropdown
+    still sits on its old value would show a stale color that visibly
+    disagreed with the now-recolored background/sidebar/etc. The values
+    (min/mean/max/...) still come from ``parameter``/``subset`` as always;
+    only the box *color* is shared app-wide. It's injected below as a
+    <style> block scoped to this call's own ``key_prefix``, since all tabs'
+    bodies run in the same Streamlit script pass (st.tabs only hides the
+    other panels in the DOM, it doesn't skip rendering them) and a global
+    `:root` color variable would leak whichever tab rendered last into
+    every other tab. ``key_prefix`` must be unique per calling tab
+    (Streamlit requires unique widget/container keys app-wide) -- callers
+    pass their own selectbox key, which is already unique per tab."""
     stats = compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
     label = pretty_name(parameter)
+    active_parameter = st.session_state.get("active_theme_parameter", parameter)
+    accent_hex = ACCENT_HEX_BY_CATEGORY[categorize_parameter(active_parameter)]
 
     stat_defs = [
         ("min", f"Min {label}", _format_stat(stats["min"], unit), True),
@@ -77,6 +93,19 @@ def render_stats_toolbar(subset: pd.DataFrame, parameter: str, key_prefix: str) 
     ]
 
     render_section_label("Key Figures:")
+
+    st.markdown(
+        f'<style>'
+        f'[class*="{key_prefix}-"][class*="-stat-accent"] {{'
+        f'background: color-mix(in srgb, {accent_hex} 80%, white) !important;'
+        f'}}'
+        f'[class*="{key_prefix}-"][class*="-stat-plain"] [data-testid="stMetricLabel"] p,'
+        f'[class*="{key_prefix}-"][class*="-stat-plain"] [data-testid="stMetricValue"] {{'
+        f'color: color-mix(in srgb, {accent_hex} 85%, transparent) !important;'
+        f'}}'
+        f'</style>',
+        unsafe_allow_html=True,
+    )
 
     cols = st.columns(5)
     for col, (slug, title, value, accent) in zip(cols, stat_defs):
@@ -103,7 +132,16 @@ def render_parameter_and_subset(raw: pd.DataFrame, key: str, show_stats: bool = 
     ``show_stats`` renders render_stats_toolbar() directly below the
     dropdown, above whatever chart the caller builds from the returned
     subset -- on by default, since every current caller wants it; the
-    escape hatch exists for a future tab that doesn't."""
+    escape hatch exists for a future tab that doesn't.
+
+    This is also the single place that feeds app.py's app-wide dynamic
+    theme (see apply_dynamic_theme() in src/ui_theme.py): every tab has
+    its own independent "Parameter" dropdown, so there's no one "current"
+    parameter to theme the whole page on -- instead, whichever dropdown's
+    value actually *changed* since its own last render is recorded as
+    st.session_state["active_theme_parameter"], so the background/sidebar/
+    etc. follow whichever one the user most recently touched, regardless
+    of which tab it's in."""
     render_section_label("Parameter")
     parameter = st.selectbox(
         "Parameter",
@@ -117,6 +155,11 @@ def render_parameter_and_subset(raw: pd.DataFrame, key: str, show_stats: bool = 
         # re-derive which rows to filter.
         format_func=pretty_name,
     )
+    prev_value_key = f"_theme_prev_{key}"
+    if st.session_state.get(prev_value_key) != parameter:
+        st.session_state["active_theme_parameter"] = parameter
+    st.session_state[prev_value_key] = parameter
+
     subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
     if show_stats:
         render_stats_toolbar(subset, parameter, key_prefix=key)
