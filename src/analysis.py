@@ -49,18 +49,87 @@ def cluster_stations(
     result["cluster"] = labels.astype(str)
     return result
 
-def compute_headline_stats(raw: pd.DataFrame) -> dict[str, float | None]:
-    """Return the three summary numbers for whatever data is currently loaded.
 
-    Aggregates across every row currently in ``raw`` — i.e. all selected
-    stations and the selected date range, exactly as chosen in the sidebar.
+PARAMETER_UNITS = {
+    "temperature_air_max_2m": "°C",
+    "temperature_air_mean_2m": "°C",
+    "temperature_air_min_2m": "°C",
+    "temperature_air_min_0_05m": "°C",
+    "precipitation_height": "mm",
+    "wind_gust_max": "m/s",
+    "wind_speed": "m/s",
+    "humidity": "%",
+    "pressure_air_site": "hPa",
+    "pressure_vapor": "hPa",
+    "snow_depth": "cm",
+    "sunshine_duration": "s",
+}
+
+HOT_DAY_TEMPERATURE_PARAMETER = "temperature_air_max_2m"
+HOT_DAY_THRESHOLD_C = 30.0
+
+
+def compute_parameter_stats(subset: pd.DataFrame, parameter: str) -> dict[str, float | int | str | None]:
+    """Return min/mean/max/mode plus one parameter-aware "total" figure for
+    whatever parameter is currently selected in a tab's "Parameter" dropdown.
+
+    ``subset`` is expected to already be filtered to that one parameter
+    (e.g. the second element render_parameter_and_subset() returns) --
+    this recomputes nothing about *which* rows to use, only aggregates
+    the "value" column it's given.
+
+    The "total" figure's meaning depends on the parameter, since a single
+    fixed definition (e.g. always summing) isn't meaningful for most of
+    DWD's climate_summary parameters:
+      - precipitation_height: summing rainfall over a period is the
+        standard "how much rain fell in total" figure.
+      - temperature_air_max_2m: DWD's own definition of a "hot day" is a
+        day whose *maximum* temperature exceeds 30°C (mean/min temperature
+        crossing 30°C isn't the standard definition, which is why this is
+        gated to specifically the max-temperature parameter, not every
+        temperature_air_* one) -- reuses the same threshold/parameter
+        get_hot_days_data() in data_loader.py already uses, so this
+        headline number and the Global Warming tab's own hot-day charts
+        agree with each other.
+      - everything else (cloud cover, wind, pressure, snow depth, the
+        other temperature variants, ...): there's no obviously "correct"
+        single total for these, so this falls back to a plain count of
+        valid observations -- always meaningful regardless of parameter,
+        and it doubles as a sample-size figure for the other four stats.
     """
-    def aggregate(parameter: str, how: str) -> float | None:
-        values = raw.loc[raw["parameter"] == parameter, "value"].dropna()
-        return float(getattr(values, how)()) if not values.empty else None
+    values = subset["value"].dropna()
+    unit = PARAMETER_UNITS.get(parameter, "")
+
+    if values.empty:
+        return {
+            "min": None,
+            "mean": None,
+            "max": None,
+            "mode": None,
+            "unit": unit,
+            "total_label": "Observations",
+            "total": 0,
+            "total_unit": "",
+        }
+
+    mode_values = values.mode()
+    mode = float(mode_values.iloc[0]) if not mode_values.empty else None
+
+    if parameter == "precipitation_height":
+        total_label, total, total_unit = "Total precipitation", float(values.sum()), "mm"
+    elif parameter == HOT_DAY_TEMPERATURE_PARAMETER:
+        total_label = f"Hot days (>{HOT_DAY_THRESHOLD_C:g}°C)"
+        total, total_unit = int((values > HOT_DAY_THRESHOLD_C).sum()), "days"
+    else:
+        total_label, total, total_unit = "Observations", int(values.count()), ""
 
     return {
-        "mean_temp_c": aggregate("temperature_air_mean_2m", "mean"),
-        "total_precip_mm": aggregate("precipitation_height", "sum"),
-        "max_wind_gust_ms": aggregate("wind_gust_max", "max"),
+        "min": float(values.min()),
+        "mean": float(values.mean()),
+        "max": float(values.max()),
+        "mode": mode,
+        "unit": unit,
+        "total_label": total_label,
+        "total": total,
+        "total_unit": total_unit,
     }

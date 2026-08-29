@@ -233,6 +233,30 @@ _BASE_CSS = """
     background: color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 12%, transparent) !important;
     border-radius: 6px !important;
 }
+[data-testid="stMetricLabel"] p,
+[data-testid="stMetricValue"] {
+    color: color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent) !important;
+}
+[data-testid="stVerticalBlock"][class*="-stat-accent"] {
+    background: color-mix(in srgb, var(--m3-primary, #4D77CB) 80%, white) !important;
+    border: none !important;
+}
+[class*="-stat-accent"] [data-testid="stMetricLabel"] p,
+[class*="-stat-accent"] [data-testid="stMetricValue"] {
+    color: #FFFFFF !important;
+}
+[data-testid="stVerticalBlock"][class*="-stat-accent"],
+[data-testid="stVerticalBlock"][class*="-stat-plain"] {
+    padding: 1rem 1.25rem !important;
+}
+[class*="-stat-accent"] [data-testid="stMetricLabel"] p,
+[class*="-stat-plain"] [data-testid="stMetricLabel"] p {
+    font-size: 14px !important;
+}
+[class*="-stat-accent"] [data-testid="stMetricValue"],
+[class*="-stat-plain"] [data-testid="stMetricValue"] {
+    font-size: 29px !important;
+}
 </style>
 """
 

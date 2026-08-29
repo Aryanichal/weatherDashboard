@@ -12,8 +12,6 @@ from src.dashboard_context import DashboardContext
 from src.data_loader import load_data, load_stations
 from src.ui_theme import render_app_background, render_brand
 from src.views import clustering, global_warming, map_view, regression, time_series
-from src.analysis import compute_headline_stats
-from src.views.common import ACTIVE_PARAMETER_KEY
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
 
@@ -67,12 +65,6 @@ ctx = DashboardContext(
     id_by_name=id_by_name,
     id_to_name=name_by_id,
 )
-stats = compute_headline_stats(raw)
-
-stat_col1, stat_col2, stat_col3 = st.columns(3)
-stat_col1.metric("Mean temperature", f"{stats['mean_temp_c']:.1f} °C" if stats["mean_temp_c"] is not None else "—")
-stat_col2.metric("Total precipitation", f"{stats['total_precip_mm']:.0f} mm" if stats["total_precip_mm"] is not None else "—")
-stat_col3.metric("Max wind gust", f"{stats['max_wind_gust_ms']:.1f} m/s" if stats["max_wind_gust_ms"] is not None else "—")
 
 tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(
     ["Time Series", "Map", "Regression", "Clustering", "Discover Global Warming"]
