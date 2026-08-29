@@ -8,8 +8,6 @@ import pandas as pd
 @dataclass
 class DashboardContext:
     raw: pd.DataFrame
-    selected_ids: list[str]
     selected_names: list[str]
     id_by_name: dict[str, str]
     id_to_name: dict[str, str]
-    use_full_list: bool

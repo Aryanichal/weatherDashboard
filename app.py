@@ -10,38 +10,33 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_data, load_stations
+from src.ui_theme import apply_dynamic_theme, render_app_background, render_brand
 from src.views import clustering, global_warming, map_view, regression, time_series
-from src.analysis import compute_headline_stats
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
-st.title("Weather Dashboard")
 
-# A handful of well-known stations as a sensible default so the app is
-# usable immediately, without forcing a full station list download+scroll.
-DEFAULT_STATIONS = {
-    "00433": "Berlin-Tempelhof",
-    "01048": "Dresden-Klotzsche",
-    "03379": "Muenchen-Stadt",
-    "02014": "Hamburg-Fuhlsbuettel",
-    "01443": "Freiburg",
-}
+render_app_background()
+render_brand()
+
+# A couple of well-known stations preselected so the app is usable
+# immediately, without the user having to search the full list first. Only
+# the IDs are hardcoded -- display names are always looked up from the
+# loaded station list below, so they match DWD's actual official spelling
+# instead of a hand-typed label going stale/wrong.
+DEFAULT_STATION_IDS = ["00433", "01048"]
 
 with st.sidebar:
     st.header("Selection")
 
-    use_full_list = st.checkbox("Browse full DWD station list", value=False)
-    if use_full_list:
-        stations_df = load_stations()
-        name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
-    else:
-        name_by_id = DEFAULT_STATIONS
+    stations_df = load_stations()
+    name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
+    id_by_name = {v: k for k, v in name_by_id.items()}
 
     selected_names = st.multiselect(
         "Weather stations",
         options=list(name_by_id.values()),
-        default=list(DEFAULT_STATIONS.values())[:2],
+        default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
     )
-    id_by_name = {v: k for k, v in name_by_id.items()}
     selected_ids = [id_by_name[n] for n in selected_names]
 
     start_date, end_date = st.date_input(
@@ -62,26 +57,17 @@ if raw.empty:
     st.warning("No data returned for this selection.")
     st.stop()
 
-id_to_name = {v: k for k, v in id_by_name.items()}
-raw["station_name"] = raw["station_id"].map(id_to_name)
+raw["station_name"] = raw["station_id"].map(name_by_id)
 
 ctx = DashboardContext(
     raw=raw,
-    selected_ids=selected_ids,
     selected_names=selected_names,
     id_by_name=id_by_name,
-    id_to_name=id_to_name,
-    use_full_list=use_full_list,
+    id_to_name=name_by_id,
 )
-stats = compute_headline_stats(raw)
-
-stat_col1, stat_col2, stat_col3 = st.columns(3)
-stat_col1.metric("Mean temperature", f"{stats['mean_temp_c']:.1f} °C" if stats["mean_temp_c"] is not None else "—")
-stat_col2.metric("Total precipitation", f"{stats['total_precip_mm']:.0f} mm" if stats["total_precip_mm"] is not None else "—")
-stat_col3.metric("Max wind gust", f"{stats['max_wind_gust_ms']:.1f} m/s" if stats["max_wind_gust_ms"] is not None else "—")
 
 tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(
-    ["Time Series", "Map", "Regression", "Clustering", "Global Warming Trend"]
+    ["Time Series", "Map", "Regression", "Clustering", "Discover Global Warming"]
 )
 
 with tab_series:
@@ -98,5 +84,11 @@ with tab_clustering:
 
 with tab_global_warming:
     global_warming.render(ctx)
+
+# Re-themes the whole page (background, sidebar, brand, tabs, ...) to
+# whichever tab's "Parameter" dropdown the user most recently changed --
+# see apply_dynamic_theme()'s docstring for why this has to run after
+# every tab above rather than once at the top.
+apply_dynamic_theme(st.session_state.get("active_theme_parameter"))
 
 
