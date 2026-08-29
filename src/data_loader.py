@@ -22,8 +22,6 @@ DATA_DIR.mkdir(exist_ok=True)
 SETTINGS = Settings(cache_dir=DATA_DIR / ".wetterdienst-cache")
 
 CLIMATE_SUMMARY = ("daily", "climate_summary")
-#WIND = ("hourly", "wind")
-#PRESSURE = ("hourly", "pressure")
 REQUEST_PARAMETERS = [CLIMATE_SUMMARY]
 LONG_RUN_CITY_STATIONS = {
     "Berlin": "00433",       # Berlin-Tempelhof
@@ -98,18 +96,6 @@ def get_station_data(
         df.to_parquet(cache_path)
 
     return df
-
-
-def export_sample_csv(
-    df: pd.DataFrame,
-    path: Path | None = None,
-    parameter: str | None = None,
-) -> Path:
-    """Export the first 200 rows, optionally limited to one parameter."""
-    export_path = path or DATA_DIR / "dwd_sample_first_200_rows.csv"
-    sample = df if parameter is None else df[df["parameter"] == parameter]
-    sample.head(200).to_csv(export_path, index=False)
-    return export_path
 
 
 def get_long_run_climate_data(
@@ -389,8 +375,5 @@ def load_climate_change_indicators(
 
 if __name__ == "__main__":
     # Quick smoke test: Berlin-Tempelhof, last full year of historical data.
-    df = get_station_data(["00433"], "2023-01-01", "2023-12-31")
-    #print(df.head())
-    #print(df["parameter"].unique())
-    ##print(f"Exported first 200 climate-summary rows to {export_sample_csv(df)}")
+    get_station_data(["00433"], "2023-01-01", "2023-12-31")
     print(get_long_run_climate_data())

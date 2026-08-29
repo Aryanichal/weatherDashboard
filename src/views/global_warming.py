@@ -268,7 +268,7 @@ def _render_trend_tab(ctx: DashboardContext) -> None:
                     "city": "City",
                 },
                 title="Hot Nights",
-            )
+                )
             with chart_card():
                 render_chart(hot_nights_fig)
     with heavy_rain_col:
@@ -287,7 +287,7 @@ def _render_trend_tab(ctx: DashboardContext) -> None:
                     "city": "City",
                 },
                 title="Heavy-Rain Days",
-            )
+                )
             with chart_card():
                 render_chart(heavy_rain_fig)
 

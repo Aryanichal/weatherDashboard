@@ -59,15 +59,13 @@ if raw.empty:
     st.warning("No data returned for this selection.")
     st.stop()
 
-id_to_name = {v: k for k, v in id_by_name.items()}
-raw["station_name"] = raw["station_id"].map(id_to_name)
+raw["station_name"] = raw["station_id"].map(name_by_id)
 
 ctx = DashboardContext(
     raw=raw,
-    selected_ids=selected_ids,
     selected_names=selected_names,
     id_by_name=id_by_name,
-    id_to_name=id_to_name,
+    id_to_name=name_by_id,
 )
 stats = compute_headline_stats(raw)
 
