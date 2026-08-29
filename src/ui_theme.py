@@ -1,24 +1,103 @@
 """Static theming/CSS for the dashboard.
 
 Pure CSS/no external assets (no image downloads, no network calls) so it
-works offline and keeps the app self-contained. The page is a single flat
-neutral gray, deliberately off the brand palette below, and the sidebar is a
-subtle light gray of its own -- the actual color/contrast lives in
-individual "cards" (see chart_card()): borderless white containers with a
-soft drop shadow, echoing the card-based dashboard look (white canvas, white
-content tiles that pop off it) rather than a colored panel-on-panel look.
+works offline and keeps the app self-contained. The page background,
+sidebar panel, cards, and every filled accent element (active tab,
+selected-station tags, chart ink) now come from a Material Design 3
+tone-based color system -- a blue-tinted SURFACE ladder plus a PRIMARY
+accent pair, both below -- rather than one-off grays and a hand-picked
+brand hex.
 
-Fixed brand palette (https://colorhunt.co/palette/e3f2fd90caf92196f30d47a1),
-still used for chart cards and selected-station tags via PALETTE["blue"] /
-PALETTE["navy"] -- just not for the page background or sidebar anymore.
+Both were originally seeded from this app's brand blue, #2196F3
+(originally from https://colorhunt.co/palette/e3f2fd90caf92196f30d47a1);
+see the comments on SURFACE and PRIMARY below for how each is actually
+derived from it now.
 """
 
 import plotly.graph_objects as go
 import streamlit as st
 
-PALETTE = {
-    "blue": "#2196F3",
-    "navy": "#0D47A1",
+# ---------------------------------------------------------------------------
+# Tone-based surfaces (Material Design 3)
+#
+#   https://m3.material.io/blog/tone-based-surface-color-m3
+#   https://m3.material.io/styles/color/system/overview
+#
+# M3's surface system is a small ladder of tones cut from one palette --
+# surface_dim/surface/surface_bright at the extremes, plus five "container"
+# steps in between -- so page background, panels, and cards all read as one
+# coherent material instead of mismatched grays. Where a role sits on the
+# ladder signals how "raised" that piece of UI is, the same role elevation/
+# shadow already play elsewhere in this file; the two are combined below
+# rather than one replacing the other.
+#
+# An earlier version of this ladder used Material Color Utilities' own
+# TonalSpot algorithm at standard contrast, seeded from this app's brand
+# blue (#2196F3) -- technically correct M3, but that algorithm caps a
+# *neutral* palette's chroma extremely low (~4-8) by design, so page
+# background, sidebar, and card all landed within a couple of luminance
+# points of each other: correct on paper, but it read as "just white"
+# rather than an actual toned surface. This version keeps the same ladder
+# *shape* (same role names, same relative ordering from dim to
+# container-lowest) but hand-tunes each tone at a much higher,
+# clearly-visible saturation (~40-48%) and the same hue as the PRIMARY
+# accent below (H=212, matching #A9CCF9), so every step -- including the
+# cards -- reads as unmistakably blue rather than a hint of one.
+#
+# surface_container_lowest (inactive tab capsules, select/dropdown boxes,
+# expander, popovers, and -- after a couple of back-and-forths, see
+# chart_card()'s own comment further down -- the chart cards too now) has
+# gone through a few tunings chasing a "blends into the page" complaint.
+# First at ~98% lightness, matching real M3's tone-100
+# "brightest step", which looked like plain white and got brought down to
+# 94% -- but at 94% it was then too close to `surface` itself (93%) for
+# these small, page-level elements (a capsule/box, not a big card) to
+# read as popped rather than blended. Settled at 97.5% lightness with
+# saturation cut roughly in half (30% vs the ladder's usual ~46%) -- light
+# enough to read as "whiter, standing out" the way these smaller floating
+# elements need, while the reduced saturation (rather than pushing
+# lightness all the way to 100%) keeps a last whisper of the same blue
+# tint instead of opting out of the tonal system entirely.
+#
+# surface_container_low (sidebar only now -- see chart_card()'s own
+# comment for why the chart cards moved off this role) was originally the
+# same ~47% saturation as the rest of the ladder, which read as too
+# strongly, distractingly blue for a fill this large. Cut to 35% (same
+# lightness/hue) for a calmer, more neutral panel that's still
+# recognizably part of the same blue-tinted system, just toned down
+# enough to stop fighting for attention with whatever's in front of it.
+SURFACE = {
+    "surface_dim": "#A8C0DC",
+    "surface": "#E5EDF5",
+    "surface_bright": "#EEF3F9",
+    "surface_container_lowest": "#F7F8FB",
+    "surface_container_low": "#D8E2EC",
+    "surface_container": "#CADAEC",
+    "surface_container_high": "#BFD2E8",
+    "surface_container_highest": "#B4CAE4",
+    "on_surface": "#1C2A3B",
+    "on_surface_variant": "#52657A",
+    "outline": "#788BA1",
+    "outline_variant": "#B7C6D7",
+}
+
+# The app's one accent color, as an M3 role *pair* rather than a single
+# hex: primary_container is the light, saturated blue fill (used for the
+# active-tab/station-tag capsules below), and on_primary_container is the
+# dark navy that M3's HCT algorithm targets to sit at standard contrast
+# (6.08:1, comfortably above AA 4.5:1) on top of that specific fill. An
+# earlier version of this file also kept a separate, hand-picked "primary"
+# ink color (#1565C0) for blue text/icons that aren't inside a filled
+# capsule -- wordmark, chart ink/gridlines, spinner text, focus rings,
+# modebar -- but that meant two different blues were both calling
+# themselves "the accent," which read as inconsistent. Every one of those
+# ink/icon uses now points at on_primary_container instead: the same dark
+# navy that already sits on the light-blue capsules, so "the accent" is
+# unambiguously one pair, used consistently whether it's filling a shape
+# or coloring text on top of a lighter surface.
+PRIMARY = {
+    "primary_container": "#A9CCF9",
+    "on_primary_container": "#1E4469",
 }
 
 
@@ -66,16 +145,16 @@ _BASE_CSS = """
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 1000001;
-    background: #FFFFFF !important;
-    border: 1px solid color-mix(in srgb, var(--theme-accent, #2196F3) 30%, transparent);
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
+    border: 1px solid color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 30%, transparent);
     border-radius: 16px;
-    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+    box-shadow: 0 12px 40px rgba(28, 42, 59, 0.18);
     padding: 1.5rem 2rem;
     width: max-content;
     max-width: min(90vw, 420px);
 }
 [data-testid="stSpinner"] p {
-    color: #0D47A1 !important;
+    color: var(--m3-on-primary-container, #1E4469) !important;
 }
 [data-testid="stSpinner"]::before {
     content: "";
@@ -212,36 +291,38 @@ _BASE_CSS = """
 [role="tablist"] .react-aria-SelectionIndicator {
     display: none;
 }
-/* Every tab is always a white capsule; the active one swaps to the brand
-   navy (same as "WeatheRe") with white text instead of just gaining a
+/* Every tab is always a white capsule; the active one swaps to the M3
+   primary-container/on-primary-container pair (standard-contrast filled
+   accent, see PRIMARY above -- a light, saturated blue with dark text
+   rather than a dark fill with white text) instead of just gaining a
    shadow, so the row reads as a proper on/off toggle rather than
    "selected = slightly raised". */
 [data-testid="stTab"] {
-    background: #FFFFFF !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
     border-radius: 999px !important;
     padding: 0.4rem 1rem !important;
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 2px 8px rgba(28, 42, 59, 0.12);
     transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 [data-testid="stTab"][aria-selected="true"] {
-    background: #0D47A1 !important;
+    background: color-mix(in srgb, var(--m3-primary-container, #A9CCF9) 94%, transparent) !important;
 }
 [data-testid="stTab"][aria-selected="true"] p {
-    color: #FFFFFF !important;
+    color: var(--m3-on-primary-container, #1E4469) !important;
 }
-/* Subtle light-gray panel (deliberately off the app's blue accent palette,
-   per instruction) so it still reads as its own "colored panel" without
-   competing with the page -- the margin is what lets the rounded corners
+/* One step down the SURFACE ladder from the page canvas -- a visibly
+   blue-tinted panel (see SURFACE above), not a neutral gray one, so it
+   reads as its own "colored panel" without competing with the white cards
+   in the main content area. The margin is what lets the rounded corners
    and shadow actually read against the page instead of being clipped by
-   the viewport edge. Being a light fill (not a dark one, unlike the
-   previous vivid-blue version), widget text/labels below are flipped to a
-   dark neutral instead of white for contrast. */
+   the viewport edge. Being a light fill, widget text/labels below are
+   flipped to a dark neutral instead of white for contrast. */
 [data-testid="stSidebar"] {
-    background: #E9ECEF;
+    background: var(--m3-surface-container-low, #D8E2EC);
     margin: 0.25rem 0 0.25rem 1rem;
     border-radius: 20px;
-    border: 1px solid rgba(0, 0, 0, 0.06);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    border: 1px solid color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 40%, transparent);
+    box-shadow: 0 8px 24px rgba(28, 42, 59, 0.08);
     overflow: hidden;
     height: calc(100vh - 0.5rem);
     transition: min-width 0.15s ease, max-width 0.15s ease, width 0.15s ease;
@@ -251,7 +332,7 @@ _BASE_CSS = """
     padding-top: 0.5rem;
 }
 /* Flip default widget text to a dark neutral so it stays legible against
-   the light-gray fill above -- covers the "Selection" header, the
+   the tinted fill above -- covers the "Selection" header, the
    "Weather stations" multiselect label, and the "Date range" label.
    Anything inside the date-input box itself is excluded so that box stays
    fully native -- confirmed via a real DevTools inspection that this
@@ -271,31 +352,34 @@ _BASE_CSS = """
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3,
 [data-testid="stSidebar"] span:not([data-baseweb="tag"] *):not([data-testid="stDateInput"] [data-baseweb="input"] *):not([data-rac]) {
-    color: #212529 !important;
+    color: var(--m3-on-surface, #1C2A3B) !important;
 }
 /* "Date range" label specifically called out heavier than the rest. */
 [data-testid="stDateInput"] label {
     font-weight: 600 !important;
 }
 /* The multiselect's selected-station "tags" default to Streamlit's own
-   blue (rgb(31,119,180)), not the brand's -- pinned to the same navy as
-   "WeatheRe" instead, matching the active-tab capsule elsewhere in this
-   file. [data-baseweb="tag"] was this rule's original selector, written
-   against an older Streamlit's BaseWeb-based multiselect; confirmed via
-   DevTools that the current build's tags carry a `data-tag` attribute
-   instead (no `data-baseweb` anywhere on them), which is why this was
-   silently never applying -- same story as the several other
-   [data-baseweb=...]/[data-testid=...] selectors elsewhere in this file
-   that turned out to be stale against the newer React Aria-based DOM. */
+   blue (rgb(31,119,180)), not the brand's -- pinned to the M3
+   primary-container role instead (same standard-contrast pair as the
+   active-tab capsule elsewhere in this file). [data-baseweb="tag"] was
+   this rule's original selector, written against an older Streamlit's
+   BaseWeb-based multiselect; confirmed via DevTools that the current
+   build's tags carry a `data-tag` attribute instead (no `data-baseweb`
+   anywhere on them), which is why this was silently never applying --
+   same story as the several other [data-baseweb=...]/[data-testid=...]
+   selectors elsewhere in this file that turned out to be stale against
+   the newer React Aria-based DOM. */
 [data-testid="stMultiSelect"] span[data-tag] {
-    background-color: #0D47A1 !important;
-    border-color: #0D47A1 !important;
+    background-color: color-mix(in srgb, var(--m3-primary-container, #A9CCF9) 94%, transparent) !important;
+    border-color: var(--m3-primary-container, #A9CCF9) !important;
 }
 /* Tag text (and its remove "x" icon) defaults to dark grey, confirmed via
-   DevTools as rgb(33,37,41) -- invisible-ish on the navy fill above, so
-   forced to white. Scoped to inside the tag specifically so the dropdown
-   list's own option text (a separate popover element, not a descendant of
-   the tag) stays whatever color it already is, unaffected.
+   DevTools as rgb(33,37,41) -- close enough to on_primary_container (the
+   guaranteed-readable pair for the primary_container fill above, same as
+   the active-tab text above) that it's pinned there explicitly rather than
+   left as a coincidental near-match. Scoped to inside the tag specifically
+   so the dropdown list's own option text (a separate popover element, not
+   a descendant of the tag) stays whatever color it already is, unaffected.
    -webkit-text-fill-color is required alongside color, not optional
    belt-and-suspenders -- confirmed by testing color alone first: it took
    in getComputedStyle(...).color but the glyphs kept rendering in the old
@@ -305,14 +389,23 @@ _BASE_CSS = """
    file). */
 [data-testid="stMultiSelect"] span[data-tag],
 [data-testid="stMultiSelect"] span[data-tag] * {
-    color: #FFFFFF !important;
-    -webkit-text-fill-color: #FFFFFF !important;
+    color: var(--m3-on-primary-container, #1E4469) !important;
+    -webkit-text-fill-color: var(--m3-on-primary-container, #1E4469) !important;
 }
 
-/* Card look for chart_card()'s st.container(border=True) wrapper: solid
-   white, no border, and a soft shadow instead of Streamlit's default flat
-   grey-bordered box -- the shadow alone is what separates it from the page
-   now that there's no border or background tint to do that job.
+/* Card look for chart_card()'s st.container(border=True) wrapper: no
+   border, and a soft shadow instead of Streamlit's default flat
+   grey-bordered box. Background is surface_container_lowest -- the same
+   whiter, lower-saturation tone the select boxes/expander/popovers below
+   use. This went through container_low (one step darker, same tone the
+   sidebar uses) first, which fixed an earlier "blends into the page"
+   complaint, but that tone then read as too strongly blue over an area
+   this large -- a chart's own data (lines, bars, points) needs to be the
+   thing that pops, not the card behind it. container_lowest keeps the
+   same separation from the page canvas (it was re-tuned lighter for
+   exactly that "stand out, but read as white/light rather than blue"
+   need -- see the SURFACE comment above) while being calm enough not to
+   compete with whatever's actually plotted on top of it.
 
    This needs TWO selectors because Streamlit restructured how border=True
    containers reach the DOM somewhere between 1.37 and 1.62 (confirmed by
@@ -351,11 +444,11 @@ _BASE_CSS = """
    order -- that's the actual fix there, not the !important alone. */
 [data-testid="stVerticalBlockBorderWrapper"][data-testid="stVerticalBlockBorderWrapper"]:not([data-testid="stAppViewBlockContainer"] > *),
 [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
-    background: #FFFFFF !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
     border: none !important;
     outline: none !important;
     border-radius: 24px !important;
-    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16) !important;
+    box-shadow: 0 12px 32px rgba(28, 42, 59, 0.16) !important;
     padding: 1.5rem !important;
     /* Confirmed via a real headless render (on the old-DOM version) that
        this padding correctly insets the plotly element by an even 24px on
@@ -386,14 +479,14 @@ _BASE_CSS = """
 [data-testid="stSelectbox"] [data-baseweb="select"],
 [data-testid="stMultiSelect"] [role="group"][data-rac],
 [data-testid="stSelectbox"] [role="group"][data-rac] {
-    background: #FFFFFF !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
     border: none !important;
     outline: none !important;
     border-radius: 10px !important;
     /* The "popped off the page" shadow -- e.g. the "Parameter" dropdown,
        which isn't wrapped in a full chart_card() anymore, still needed
        something to read as raised rather than flat-printed on the page. */
-    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 4px 14px rgba(28, 42, 59, 0.12);
     transition: box-shadow 0.15s ease;
 }
 /* ...except inside the sidebar: its boxes (station tags, and the date box
@@ -407,6 +500,26 @@ _BASE_CSS = """
 [data-testid="stSidebar"] [data-testid="stSelectbox"] [role="group"][data-rac] {
     box-shadow: none;
 }
+/* Number input boxes (e.g. "Trend start year", "Hot day threshold" in the
+   Global Warming Trend settings) default to Streamlit's own flat input
+   grey, `rgb(240, 242, 246)` -- confirmed via DevTools that the actual
+   colored box is [data-testid="stNumberInputContainer"], one level inside
+   the outer [data-testid="stNumberInput"] wrapper (which is itself
+   transparent). Given the same primary_container/on_primary_container
+   pair as every other capsule/chip in this file (active tab, station
+   tags, wordmark) instead, rather than leaving these as the one place
+   still using an unstyled native gray -- text color has to be set on the
+   input field *and* both step buttons separately since Streamlit renders
+   the -/+ glyphs as a separate <button><svg> pair whose fill inherits
+   `color` from here, not from the container. */
+[data-testid="stNumberInputContainer"] {
+    background: color-mix(in srgb, var(--m3-primary-container, #A9CCF9) 94%, transparent) !important;
+}
+[data-testid="stNumberInputField"],
+[data-testid="stNumberInputStepDown"],
+[data-testid="stNumberInputStepUp"] {
+    color: var(--m3-on-primary-container, #1E4469) !important;
+}
 /* Focus falls on an element nested inside the box, not the box itself, so
    :focus-within on the wrapper is what catches "this control is active"
    and lets us draw a focus ring -- there's no resting border to move away
@@ -415,7 +528,7 @@ _BASE_CSS = """
 [data-testid="stSelectbox"]:focus-within [data-baseweb="select"],
 [data-testid="stMultiSelect"]:focus-within [role="group"][data-rac],
 [data-testid="stSelectbox"]:focus-within [role="group"][data-rac] {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--theme-accent, #2196F3) 22%, transparent) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 22%, transparent) !important;
 }
 /* The "Global warming trend settings" expander is no longer wrapped in a
    chart_card() -- its own <details> box now carries that same white/
@@ -430,10 +543,10 @@ _BASE_CSS = """
    `rgb(248,249,251)`, as a native "this section is active" highlight) --
    testing only the collapsed state missed this the first time around. */
 [data-testid="stExpander"] details {
-    background: #FFFFFF !important;
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
     border: none !important;
     border-radius: 10px !important;
-    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.12) !important;
+    box-shadow: 0 4px 14px rgba(28, 42, 59, 0.12) !important;
 }
 [data-testid="stExpander"] summary {
     background: transparent !important;
@@ -443,55 +556,63 @@ _BASE_CSS = """
    hard-edged white box. The date-input's calendar popover is left alone
    (native), same as the date box itself. */
 [data-baseweb="menu"] {
+    background: color-mix(in srgb, var(--m3-surface-container-lowest, #F7F8FB) 94%, transparent) !important;
     border-radius: 10px !important;
     overflow: hidden;
-    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12) !important;
+    box-shadow: 0 8px 24px rgba(28, 42, 59, 0.12) !important;
 }
 /* Plotly chart toolbar (zoom/pan/download): color comes from style_fig()'s
    modebar config, this is just the hover/active affordance -- a soft
    rounded highlight instead of Plotly's default hard-edged grey square,
    so it reads as a modern icon button rather than a stock widget. */
 .modebar-btn:hover, .modebar-btn.active {
-    background: color-mix(in srgb, #2196F3 12%, transparent) !important;
+    background: color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 12%, transparent) !important;
     border-radius: 6px !important;
 }
 </style>
 """
 
-# Flat, single-color page background -- deliberately off the app's blue
-# palette per instruction: no gradient, no wash, just one faded
-# grayish-white behind everything.
-_BACKGROUND_COLOR = "#F5F5F7"
-
-# Fixed accent (PALETTE["blue"]) for anything that needs a solid color tied
-# to the brand -- chart cards, the multiselect "tag" background -- rather
-# than Streamlit's default blue. Not part of the background/sidebar change
-# above; still drawn from the palette since it wasn't called out.
-_ACCENT = PALETTE["blue"]
+# Page canvas: the M3 "surface" role -- the baseline tone the rest of the
+# SURFACE ladder (sidebar, cards, popovers) is built on top of. A single
+# flat fill, no gradient, same as before -- just sourced from the tonal
+# system now instead of an arbitrary gray.
+_BACKGROUND_COLOR = SURFACE["surface"]
 
 
 def render_app_background() -> None:
-    """Inject the base CSS and the static page background."""
+    """Inject the base CSS, the tone-based SURFACE/PRIMARY custom
+    properties, and the static page background."""
     st.markdown(_BASE_CSS, unsafe_allow_html=True)
+    # Every --m3-<role> custom property the CSS above references (var(...)
+    # calls always carry their own hex fallback too, so this dict is the
+    # single source of truth -- nothing here needs to be kept in sync by
+    # hand against the CSS block).
+    tokens = {**SURFACE, **PRIMARY}
+    css_vars = " ".join(f'--m3-{role.replace("_", "-")}: {hex_value};' for role, hex_value in tokens.items())
     st.markdown(
         f'<style>.stApp {{ background: {_BACKGROUND_COLOR}; }}'
-        f' :root {{ --theme-accent: {_ACCENT}; }}</style>',
+        f' :root {{ {css_vars} }}</style>',
         unsafe_allow_html=True,
     )
 
 
 def render_brand() -> None:
-    """Render the "WeatheRe" wordmark in the brand navy, at the top-left of
-    the main content area, immediately next to the sidebar -- this replaces
-    the old st.title("Weather Dashboard"). Deliberately normal document
-    flow rather than position: fixed to a hardcoded coordinate: an in-flow
-    element at the top of .block-container sits right at the sidebar's edge
-    and automatically shifts left with .main when the sidebar is collapsed,
-    which a fixed position could not do without JS to track sidebar state."""
+    """Render the "WeatheRe" wordmark as plain text in on_primary_container
+    -- the same dark-navy ink used for chart text and for text sitting on
+    top of the primary_container capsules elsewhere (active tab, station
+    tags, number-input boxes), so it still reads as "the accent" without a
+    filled pill/chip behind it. Rendered at the top-left of the main
+    content area, immediately next to the sidebar -- this replaces the old
+    st.title("Weather Dashboard"). Deliberately normal document flow
+    rather than position: fixed to a hardcoded coordinate: an in-flow
+    element at the top of .block-container sits right at the sidebar's
+    edge and automatically shifts left with .main when the sidebar is
+    collapsed, which a fixed position could not do without JS to track
+    sidebar state."""
     st.markdown(
         f'<div class="app-brand" style="text-align: left; font-weight: 700; '
         f'font-size: 1.6rem; letter-spacing: 0.02em; '
-        f'color: {PALETTE["navy"]};">WeatheRe</div>',
+        f'color: {PRIMARY["on_primary_container"]};">WeatheRe</div>',
         unsafe_allow_html=True,
     )
 
@@ -506,11 +627,15 @@ def chart_card():
     return st.container(border=True)
 
 
-# PALETTE["navy"] for text/gridlines -- reads fine over the tinted
+# on_primary_container (the same accent ink used everywhere else, see the
+# PRIMARY comment above) for text/gridlines -- reads fine over the tinted
 # chart_card() background regardless of which weather mood is active, since
 # only the page background (not the accent/ink) changes with the mood.
-_CHART_INK = PALETTE["navy"]
-_CHART_GRID = "rgba(13, 71, 161, 0.12)"
+# _CHART_GRID is the same color as an rgb() triple (#1E4469 =
+# rgb(30,68,105)) at low opacity, since Plotly's gridcolor/zerolinecolor/
+# linecolor options don't accept CSS custom properties.
+_CHART_INK = PRIMARY["on_primary_container"]
+_CHART_GRID = "rgba(30, 68, 105, 0.12)"
 
 
 def style_fig(fig: go.Figure) -> go.Figure:
@@ -521,16 +646,37 @@ def style_fig(fig: go.Figure) -> go.Figure:
         plot_bgcolor="rgba(0,0,0,0)",
         font_color=_CHART_INK,
         title_font_color=_CHART_INK,
-        legend=dict(bgcolor="rgba(0,0,0,0)"),
+        # font_color above only sets the *fallback* Plotly text color --
+        # Streamlit's own default chart template sets its own explicit,
+        # much lighter gray (confirmed via DevTools: rgb(128,132,149)) on
+        # tick labels, axis titles, and the legend specifically, which
+        # wins over that fallback since it's the more specific setting.
+        # Legend/axis title/tickfont colors have to be forced individually
+        # to actually override it -- this is why those three were still
+        # showing up light gray even though the chart's own main title
+        # (set via title_font_color above) was already the right color.
+        legend=dict(bgcolor="rgba(0,0,0,0)", font_color=_CHART_INK),
         margin=dict(t=60, b=50, l=40, r=40),
         # Plotly's modebar (the zoom/pan/download toolbar) defaults to
         # its own grey-on-white palette regardless of the figure's own
         # theming -- pinned to the brand accent instead so it doesn't look
         # like a leftover default widget bolted onto a themed chart.
-        modebar=dict(bgcolor="rgba(0,0,0,0)", color="#90A4AE", activecolor=PALETTE["blue"]),
+        modebar=dict(bgcolor="rgba(0,0,0,0)", color="#90A4AE", activecolor=PRIMARY["on_primary_container"]),
     )
-    fig.update_xaxes(gridcolor=_CHART_GRID, zerolinecolor=_CHART_GRID, linecolor=_CHART_GRID)
-    fig.update_yaxes(gridcolor=_CHART_GRID, zerolinecolor=_CHART_GRID, linecolor=_CHART_GRID)
+    fig.update_xaxes(
+        gridcolor=_CHART_GRID,
+        zerolinecolor=_CHART_GRID,
+        linecolor=_CHART_GRID,
+        tickfont_color=_CHART_INK,
+        title_font_color=_CHART_INK,
+    )
+    fig.update_yaxes(
+        gridcolor=_CHART_GRID,
+        zerolinecolor=_CHART_GRID,
+        linecolor=_CHART_GRID,
+        tickfont_color=_CHART_INK,
+        title_font_color=_CHART_INK,
+    )
     return fig
 
 
