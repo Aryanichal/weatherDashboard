@@ -6,6 +6,7 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_stations
+from src.ui_theme import style_fig
 from src.views.common import render_parameter_and_subset
 
 
@@ -23,4 +24,4 @@ def render(ctx: DashboardContext) -> None:
         hover_name="name", zoom=4.5, map_style="open-street-map",
         title=f"Mean {parameter} by station",
     )
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(style_fig(fig), width="stretch")

@@ -4,6 +4,7 @@ import plotly.express as px
 import streamlit as st
 
 from src.dashboard_context import DashboardContext
+from src.ui_theme import style_fig
 from src.views.common import render_parameter_and_subset
 
 
@@ -14,4 +15,4 @@ def render(ctx: DashboardContext) -> None:
         title=f"{parameter} over time",
     )
     fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(style_fig(fig), width="stretch")

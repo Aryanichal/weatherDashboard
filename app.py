@@ -10,10 +10,16 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_data, load_stations
+from src.ui_theme import render_weather_background
 from src.views import clustering, global_warming, map_view, regression, time_series
 from src.analysis import compute_headline_stats
+from src.views.common import ACTIVE_PARAMETER_KEY
 
 st.set_page_config(page_title="Weather Dashboard", layout="wide")
+
+st.session_state.setdefault(ACTIVE_PARAMETER_KEY, "temperature_air_mean_2m")
+render_weather_background(st.session_state[ACTIVE_PARAMETER_KEY])
+
 st.title("Weather Dashboard")
 
 # A handful of well-known stations as a sensible default so the app is

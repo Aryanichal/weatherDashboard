@@ -8,8 +8,9 @@ import datetime as dt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
+from src.ui_theme import style_fig
 from src.dashboard_context import DashboardContext
+
 from src.data_loader import (
     ANOMALY_BASELINE_END_YEAR,
     ANOMALY_BASELINE_START_YEAR,
@@ -19,6 +20,7 @@ from src.data_loader import (
     load_long_run_data,
     load_station_metadata,
 )
+
 from src.forecasting import (
     FORECAST_CACHE_VERSION,
     HOT_DAYS_INDICATOR,
@@ -26,6 +28,7 @@ from src.forecasting import (
     PYTORCH_MODEL_NAME,
     load_forecasts,
 )
+
 
 
 def _warn_about_missing_coverage(
@@ -221,7 +224,7 @@ def render(ctx: DashboardContext) -> None:
             },
             title="Global Warming Trend",
         )
-        st.plotly_chart(anomaly_fig, width="stretch")
+        st.plotly_chart(style_fig(anomaly_fig), width="stretch")
         st.caption(
             f"Anomalies are relative to each city's {gw_baseline_start_year}–{gw_baseline_end_year} "
             f"annual-mean-temperature baseline; {current_year} values are year-to-date."
@@ -245,7 +248,7 @@ def render(ctx: DashboardContext) -> None:
                 },
                 title="Hot Nights",
             )
-            st.plotly_chart(hot_nights_fig, width="stretch")
+            st.plotly_chart(style_fig(hot_nights_fig), width="stretch")
     with heavy_rain_col:
         if heavy_rain_missing:
             st.info("No precipitation data is available for any selected station.")
@@ -263,7 +266,7 @@ def render(ctx: DashboardContext) -> None:
                 },
                 title="Heavy-Rain Days",
             )
-            st.plotly_chart(heavy_rain_fig, width="stretch")
+            st.plotly_chart(style_fig(heavy_rain_fig), width="stretch")
 
     if long_run_missing:
         st.info(f"No {month_name} temperature data is available for any selected station.")
@@ -277,7 +280,7 @@ def render(ctx: DashboardContext) -> None:
             labels={"year": "Year", "observed_temp": f"Average {month_name} temperature (°C)", "city": "City"},
             title=f"Average {month_name} Temperature",
         )
-        st.plotly_chart(temperature_fig, width="stretch")
+        st.plotly_chart(style_fig(temperature_fig), width="stretch")
 
     if hot_days_missing:
         st.info("No daytime maximum temperature data is available for any selected station.")
@@ -295,7 +298,7 @@ def render(ctx: DashboardContext) -> None:
             },
             title=f"Hot Days Above {gw_hot_day_threshold:g} °C",
         )
-        st.plotly_chart(hot_days_fig, width="stretch")
+        st.plotly_chart(style_fig(hot_days_fig), width="stretch")
         st.caption("The current year's hot-day count is year-to-date.")
 
     st.divider()
