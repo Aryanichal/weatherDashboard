@@ -65,11 +65,10 @@ HOT_DAY_THRESHOLD_C = 30.0
 # Some DWD parameters are more useful to users grouped together under one
 # dropdown entry than picked between individually. Each composite maps a
 # synthetic key (never an actual DWD `parameter` value) to the raw
-# parameters it bundles ("components") and which single one of those backs
-# the Key Figures cards by default ("primary") -- see
-# render_parameter_and_subset() in src/views/common.py, which offers/
-# expands these, and COMPOSITE_PARAMETER_GROUPS at the bottom of this file,
-# which also wires in a composite's custom stats function when one exists.
+# parameters it bundles ("components") and how its Key Figures cards are
+# computed -- see COMPOSITE_PARAMETER_GROUPS at the bottom of this file for
+# the three supported shapes, and render_parameter_and_subset() in
+# src/views/common.py, which offers/expands these in the dropdown.
 
 TEMPERATURE_COMPOSITE_KEY = "temperature"
 TEMPERATURE_COMPONENT_PARAMETERS = [
@@ -99,7 +98,14 @@ TEMPERATURE_TREND_LABELS = {
 TEMPERATURE_TREND_PARAMETER_BY_LABEL = {label: param for param, label in TEMPERATURE_TREND_LABELS.items()}
 
 PRECIPITATION_COMPOSITE_KEY = "precipitation"
-PRECIPITATION_COMPONENT_PARAMETERS = ["precipitation_height", "precipitation_form"]
+# snow_depth is grouped in here since snow is a direct consequence of
+# precipitation falling in that form (see PRECIPITATION_FORM_LABELS below)
+# -- but it's a different kind of quantity (an accumulated depth, not a
+# daily amount or a category), so it gets its own cards + chart appended
+# after the main precipitation_height/precipitation_form ones rather than
+# being merged into either. See time_series.py's PRECIPITATION_COMPOSITE_KEY
+# branch.
+PRECIPITATION_COMPONENT_PARAMETERS = ["precipitation_height", "precipitation_form", "snow_depth"]
 PRECIPITATION_PRIMARY_PARAMETER = "precipitation_height"
 
 # DWD's numeric codes for precipitation_form (RSKF), per DWD's own dataset
@@ -116,6 +122,13 @@ PRECIPITATION_FORM_LABELS = {
     9.0: "Missing / undetermined (automatic)",
 }
 
+WIND_COMPOSITE_KEY = "wind"
+WIND_COMPONENT_PARAMETERS = ["wind_speed", "wind_gust_max"]
+WIND_PRIMARY_PARAMETER = "wind_speed"
+
+HUMIDITY_COMPOSITE_KEY = "humidity_pressure_vapor"
+HUMIDITY_COMPOSITE_COMPONENTS = ["humidity", "pressure_vapor"]
+
 PARAMETER_COLOR_CATEGORY = {
     "temperature_air_max_2m": "temperature",
     "temperature_air_mean_2m": "temperature",
@@ -128,11 +141,13 @@ PARAMETER_COLOR_CATEGORY = {
     "humidity": "precipitation",
     "pressure_vapor": "precipitation",
     PRECIPITATION_COMPOSITE_KEY: "precipitation",
+    HUMIDITY_COMPOSITE_KEY: "precipitation",
     "cloud_cover_total": "neutral",
     "snow_depth": "neutral",
     "wind_gust_max": "neutral",
     "wind_speed": "neutral",
     "pressure_air_site": "neutral",
+    WIND_COMPOSITE_KEY: "neutral",
 }
 
 
@@ -194,12 +209,11 @@ def compute_parameter_stats(subset: pd.DataFrame, parameter: str) -> dict[str, f
 def compute_temperature_stats(subset: pd.DataFrame) -> dict[str, float | int | str | None]:
     """Key Figures for the "Temperature" composite, with each stat read
     from its own correct source rather than all five being derived off
-    one series (a bug flagged in review: computing min/max off the daily
-    *mean* series understates how cold/hot it actually got, since it's
-    reporting the min of an already-averaged series).
+    one series (min/max off the daily *mean* series would understate how
+    cold/hot it actually got).
 
-      - min: the coldest single reading in the period -- the minimum of
-        the *daily minimum* (temperature_air_min_2m) series.
+      - min: the coldest single reading -- the minimum of the *daily
+        minimum* (temperature_air_min_2m) series.
       - max: the hottest single reading -- the maximum of the *daily
         maximum* (temperature_air_max_2m) series.
       - mean: the average of the *daily mean* (temperature_air_mean_2m)
@@ -211,9 +225,8 @@ def compute_temperature_stats(subset: pd.DataFrame) -> dict[str, float | int | s
 
     ``subset`` is long-format rows for (at least) the three 2m
     temperature parameters -- any other rows present (e.g. the ground
-    frost reading, if the caller passed the full composite subset) are
-    simply ignored here, the same way they're excluded from the band
-    chart.
+    frost reading) are simply ignored here, the same way they're
+    excluded from the band chart.
     """
     min_values = subset.loc[subset["parameter"] == "temperature_air_min_2m", "value"].dropna()
     mean_values = subset.loc[subset["parameter"] == "temperature_air_mean_2m", "value"].dropna()
@@ -248,9 +261,20 @@ def compute_temperature_stats(subset: pd.DataFrame) -> dict[str, float | int | s
 
 
 # Defined last so it can reference the compute_*_stats functions above.
-# "stats_fn", when present, overrides the default primary-parameter-based
-# stats computation for that composite -- see render_parameter_and_subset()
-# in src/views/common.py.
+# Each entry supports one of three shapes, all handled by
+# render_parameter_and_subset() in src/views/common.py:
+#   - "stats_fn": one merged 5-card block, computed by the group's own
+#     function (Temperature -- min/max need sourcing from different
+#     series than mean/mode).
+#   - "stats_parameters": one complete, independently-labeled 5-card
+#     block per parameter listed, with rendering order left to the
+#     calling view (Humidity and Pressure Vapor -- collapsing to a
+#     single block would lose one of the two readings).
+#   - neither (just "primary"): the default -- one 5-card block off that
+#     single parameter, labeled with the composite's own name
+#     (Precipitation, Wind).
+# "label" overrides the dropdown's display text for composites that
+# don't read cleanly through pretty_name()'s generic snake_case split.
 COMPOSITE_PARAMETER_GROUPS = {
     TEMPERATURE_COMPOSITE_KEY: {
         "components": TEMPERATURE_ALL_PARAMETERS,
@@ -260,5 +284,14 @@ COMPOSITE_PARAMETER_GROUPS = {
     PRECIPITATION_COMPOSITE_KEY: {
         "components": PRECIPITATION_COMPONENT_PARAMETERS,
         "primary": PRECIPITATION_PRIMARY_PARAMETER,
+    },
+    WIND_COMPOSITE_KEY: {
+        "components": WIND_COMPONENT_PARAMETERS,
+        "primary": WIND_PRIMARY_PARAMETER,
+    },
+    HUMIDITY_COMPOSITE_KEY: {
+        "components": HUMIDITY_COMPOSITE_COMPONENTS,
+        "stats_parameters": HUMIDITY_COMPOSITE_COMPONENTS,
+        "label": "Humidity and Pressure Vapor",
     },
 }
