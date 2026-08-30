@@ -64,6 +64,8 @@ ctx = DashboardContext(
     selected_names=selected_names,
     id_by_name=id_by_name,
     id_to_name=name_by_id,
+    start_date=start_date,
+    end_date=end_date,
 )
 
 tab_series, tab_map, tab_regression, tab_clustering, tab_global_warming = st.tabs(

@@ -347,8 +347,14 @@ def render_brand() -> None:
     )
 
 
-def chart_card():
-    return st.container(border=True)
+def chart_card(key: str | None = None):
+    """``key`` is only needed by callers that must target this specific
+    card with scoped CSS afterwards (e.g. positioning an overlay icon over
+    one particular chart) -- see render_missing_stations_indicator() in
+    src/views/common.py. Streamlit adds an "st-key-{key}" class to the
+    container's wrapper div, so passing one doesn't change anything
+    visually by itself."""
+    return st.container(border=True, key=key)
 
 
 _CHART_INK = PRIMARY["on_primary_container"]
