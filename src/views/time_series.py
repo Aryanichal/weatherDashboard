@@ -20,6 +20,25 @@ from src.views.common import pretty_name, render_parameter_and_subset
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
 _GRID_COLUMNS = 2
+_FEATURED_CHART_HEIGHT = 480
+
+# Short labels for the band-chart trend-line toggle, and which of the
+# other two 2m series bound the shaded band (low, high) for each choice.
+# temperature_air_min_2m/_max_2m always occupy the low/high slot no
+# matter what -- min <= mean <= max always holds in DWD's climate_summary
+# -- only temperature_air_mean_2m ever moves between being the line and
+# being a band edge.
+_TEMPERATURE_TREND_LABELS = {
+    "temperature_air_mean_2m": "Mean",
+    "temperature_air_max_2m": "Max",
+    "temperature_air_min_2m": "Min",
+}
+_TEMPERATURE_TREND_PARAMETER_BY_LABEL = {label: param for param, label in _TEMPERATURE_TREND_LABELS.items()}
+_TEMPERATURE_BAND_BOUNDS = {
+    "temperature_air_mean_2m": ("temperature_air_min_2m", "temperature_air_max_2m"),
+    "temperature_air_max_2m": ("temperature_air_min_2m", "temperature_air_mean_2m"),
+    "temperature_air_min_2m": ("temperature_air_mean_2m", "temperature_air_max_2m"),
+}
 
 
 def _station_color(station_name: str, station_order: list[str]) -> str:
@@ -32,10 +51,17 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
-def _render_temperature_band(subset: pd.DataFrame) -> go.Figure:
-    """2m air temperature (max/mean/min) as a shaded band + mean line per
-    station. ``subset`` must already be filtered to just the three 2m
-    parameters."""
+def _render_temperature_band(subset: pd.DataFrame, trend_parameter: str) -> go.Figure:
+    """2m air temperature as a shaded band + one highlighted trend line
+    per station. ``trend_parameter`` picks which of the three 2m series
+    (mean/max/min) is drawn as the solid line; the other two become the
+    band's lower and upper edge, via _TEMPERATURE_BAND_BOUNDS. ``subset``
+    must already be filtered to just the three 2m parameters."""
+    low_parameter, high_parameter = _TEMPERATURE_BAND_BOUNDS[trend_parameter]
+    trend_label = _TEMPERATURE_TREND_LABELS[trend_parameter]
+    low_label = _TEMPERATURE_TREND_LABELS[low_parameter]
+    high_label = _TEMPERATURE_TREND_LABELS[high_parameter]
+
     wide = subset.pivot_table(index=["station_name", "date"], columns="parameter", values="value").reset_index()
     wide = wide.sort_values(["station_name", "date"])
     station_order = sorted(wide["station_name"].unique())
@@ -48,7 +74,7 @@ def _render_temperature_band(subset: pd.DataFrame) -> go.Figure:
         fig.add_trace(
             go.Scatter(
                 x=station_data["date"],
-                y=station_data["temperature_air_max_2m"],
+                y=station_data[high_parameter],
                 mode="lines",
                 line=dict(width=0),
                 hoverinfo="skip",
@@ -58,7 +84,7 @@ def _render_temperature_band(subset: pd.DataFrame) -> go.Figure:
         fig.add_trace(
             go.Scatter(
                 x=station_data["date"],
-                y=station_data["temperature_air_min_2m"],
+                y=station_data[low_parameter],
                 mode="lines",
                 line=dict(width=0),
                 fill="tonexty",
@@ -70,31 +96,31 @@ def _render_temperature_band(subset: pd.DataFrame) -> go.Figure:
         fig.add_trace(
             go.Scatter(
                 x=station_data["date"],
-                y=station_data["temperature_air_mean_2m"],
+                y=station_data[trend_parameter],
                 mode="lines",
                 name=station_name,
                 line=dict(color=color),
-                customdata=station_data[["temperature_air_min_2m", "temperature_air_max_2m"]],
+                customdata=station_data[[low_parameter, high_parameter]],
                 hovertemplate=(
                     f"<b>{station_name}</b><br>"
                     "%{x|%d-%m-%Y}<br>"
-                    "Mean: %{y:.1f} °C<br>"
-                    "Min: %{customdata[0]:.1f} °C · Max: %{customdata[1]:.1f} °C"
+                    f"{trend_label}: " "%{y:.1f} °C<br>"
+                    f"{low_label}: " "%{customdata[0]:.1f} °C · "
+                    f"{high_label}: " "%{customdata[1]:.1f} °C"
                     "<extra></extra>"
                 ),
             )
         )
 
-    fig.update_layout(title="Temperature over time", legend_title_text="Station")
+    fig.update_layout(title=f"Temperature over time ({trend_label} trend)", legend_title_text="Station")
     fig.update_yaxes(title="Temperature (°C)")
     fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
     return fig
 
 
 def _render_ground_frost_chart(subset: pd.DataFrame) -> go.Figure:
-    """Second temperature visual: the 5cm ground-level minimum, kept on
-    its own axis since it's a frost-risk reading rather than an
-    air-temperature variant."""
+    """Ground-level (5cm) minimum -- kept on its own axis since it's a
+    frost-risk reading rather than an air-temperature variant."""
     ground = subset[subset["parameter"] == TEMPERATURE_GROUND_PARAMETER]
     fig = px.line(
         ground, x="date", y="value", color="station_name",
@@ -106,9 +132,10 @@ def _render_ground_frost_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_monthly_average_chart(subset: pd.DataFrame) -> go.Figure:
-    """Third temperature visual: average daily-mean 2m air temperature per
-    calendar month, per station -- the season-at-a-glance summary of the
-    noisy daily band chart above."""
+    """Average daily-mean 2m air temperature per calendar month, per
+    station -- always keyed to the mean series regardless of the band
+    chart's trend-line toggle, since this is meant as a stable seasonal
+    reference rather than something that should shift with it."""
     mean_temp = subset[subset["parameter"] == TEMPERATURE_PRIMARY_PARAMETER].copy()
     mean_temp["month"] = pd.to_datetime(mean_temp["date"]).dt.to_period("M").dt.to_timestamp()
     monthly = mean_temp.groupby(["station_name", "month"], as_index=False)["value"].mean()
@@ -123,10 +150,8 @@ def _render_monthly_average_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_precipitation_height_chart(subset: pd.DataFrame) -> go.Figure:
-    """First precipitation visual: daily rainfall amount per station, as
-    a bar chart -- rainfall totals are conventionally shown as bars
-    (one per day), unlike temperature which reads better as a continuous
-    line."""
+    """Daily rainfall amount per station, as a bar chart -- rainfall
+    totals are conventionally shown as bars, unlike temperature."""
     height = subset[subset["parameter"] == "precipitation_height"]
     fig = px.bar(
         height, x="date", y="value", color="station_name", barmode="group",
@@ -138,11 +163,9 @@ def _render_precipitation_height_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
-    """Second precipitation visual: what form the precipitation took,
-    as a monthly stacked bar of day counts per DWD precipitation-form
-    code (see PRECIPITATION_FORM_LABELS in src/analysis.py) -- one
-    faceted panel per station, since form and station both need their
-    own visual dimension and color is already spent on form."""
+    """What form the precipitation took, as a monthly stacked bar of day
+    counts per DWD precipitation-form code (see PRECIPITATION_FORM_LABELS
+    in src/analysis.py), faceted one panel per station."""
     form = subset[subset["parameter"] == "precipitation_form"].dropna(subset=["value"]).copy()
     form["form_label"] = form["value"].map(PRECIPITATION_FORM_LABELS)
     form["form_label"] = form["form_label"].fillna(form["value"].apply(lambda code: f"Code {code:g}"))
@@ -164,6 +187,14 @@ def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _render_featured_chart(fig: go.Figure) -> None:
+    """Render one chart full-width at the taller "featured" height, above
+    whatever grid of smaller charts follows it."""
+    fig.update_layout(height=_FEATURED_CHART_HEIGHT)
+    with chart_card():
+        render_chart(fig)
+
+
 def _render_chart_grid(figs: list[go.Figure], columns: int = _GRID_COLUMNS) -> None:
     """Lay out ``figs`` in a fixed-column grid instead of stacking each one
     full-width, so a typical desktop viewport shows multiple charts at
@@ -183,9 +214,21 @@ def render(ctx: DashboardContext) -> None:
 
     if parameter == TEMPERATURE_COMPOSITE_KEY:
         band_subset = subset[subset["parameter"].isin(TEMPERATURE_COMPONENT_PARAMETERS)]
+
+        trend_label = st.segmented_control(
+            "Trend line",
+            options=list(_TEMPERATURE_TREND_PARAMETER_BY_LABEL),
+            default="Mean",
+            key="temperature_trend_line",
+        )
+        # segmented_control returns None if the user clicks the selected
+        # option again to deselect it -- fall back to Mean rather than
+        # letting the chart below break.
+        trend_parameter = _TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label or "Mean"]
+
+        _render_featured_chart(_render_temperature_band(band_subset, trend_parameter))
         _render_chart_grid(
             [
-                _render_temperature_band(band_subset),
                 _render_ground_frost_chart(subset),
                 _render_monthly_average_chart(subset),
             ]
