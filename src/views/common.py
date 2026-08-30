@@ -3,19 +3,17 @@
 import pandas as pd
 import streamlit as st
 
-from src.analysis import categorize_parameter, compute_parameter_stats
+from src.analysis import (
+    COMPOSITE_PARAMETER_GROUPS,
+    categorize_parameter,
+    compute_parameter_stats,
+)
 from src.ui_theme import ACCENT_HEX_BY_CATEGORY
 
 
 def pretty_name(parameter: str) -> str:
-    """Turn a raw snake_case parameter/column name (e.g. "cloud_cover_total",
-    as it comes straight from wetterdienst's DWD data) into a display string
-    with spaces and each word capitalized ("Cloud Cover Total").
-
-    str.capitalize() rather than str.title() per word: title() would also
-    force a unit suffix like the "2m" in "temperature_air_mean_2m" to
-    "2M", which reads as a typo -- capitalize() only touches the first
-    character, and a leading digit is left as-is, so "2m" stays "2m"."""
+    """"cloud_cover_total" -> "Cloud Cover Total". Also handles composite
+    keys like "temperature" -> "Temperature" with no special-casing."""
     return " ".join(word.capitalize() for word in parameter.split("_"))
 
 
@@ -30,13 +28,6 @@ def _format_total(value: int | float, unit: str) -> str:
 
 
 def render_section_label(text: str) -> None:
-    """Render a small section-heading label in the M3 "Title Medium" scale
-    (16px/600 weight/0.15px tracking) and this app's accent-blue.
-
-    Used above every dropdown/data callout in a tab -- "Parameter",
-    "Key Figures:", "Station", "Slope" -- so they all read as one type
-    scale and spacing rhythm instead of each widget/st.write() drifting to
-    its own default size and color."""
     st.markdown(
         f'<p style="font-size:16px;font-weight:600;letter-spacing:0.15px;'
         f'color:color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent);'
@@ -45,42 +36,30 @@ def render_section_label(text: str) -> None:
     )
 
 
-def render_stats_toolbar(subset: pd.DataFrame, parameter: str, key_prefix: str) -> None:
-    """Render a min/mean/max/mode/total "toolbar" row for one parameter's
-    already-filtered data, as five separate chart_card()-style boxes rather
-    than one box holding five metrics.
+def render_stats_toolbar(
+    subset: pd.DataFrame,
+    parameter: str,
+    key_prefix: str,
+    display_label: str | None = None,
+    stats: dict[str, float | int | str | None] | None = None,
+) -> None:
+    """Min/mean/max/mode/total cards for one parameter's filtered data.
 
-    Dynamic by construction: it's driven entirely by whatever ``subset``/
-    ``parameter`` the caller's own "Parameter" dropdown currently has
-    selected, so switching that dropdown recomputes and re-renders this on
-    the very next Streamlit rerun -- there's no separate state to keep in
-    sync, because there's nothing fixed to go stale. See
-    compute_parameter_stats() in src/analysis.py for what "total" means
-    for a given parameter (it isn't always a sum).
+    ``stats``, when provided, is used as-is instead of being computed from
+    ``subset``/``parameter`` via compute_parameter_stats() -- this is how
+    a composite with its own stats function (e.g. compute_temperature_stats
+    in src/analysis.py) supplies numbers that don't all come from one
+    series. ``parameter``/``subset`` are still required in that case (for
+    the active-theme accent color and as harmless bookkeeping), just not
+    used to compute the numbers themselves.
 
-    The 1st/3rd/5th boxes (Min, Max, Total) get the "stat-accent" marker
-    class -- solid background, white text -- while the 2nd/4th (Mean, Mode)
-    get "stat-plain" and keep the white chart-card look with tinted text;
-    see the "[class*=...]" rules in ui_theme.py for the category-independent
-    structure (padding, font size, white text on accent) each class
-    triggers. The *color* itself follows the same app-wide "active theme"
-    parameter as apply_dynamic_theme() in src/ui_theme.py (whichever tab's
-    "Parameter" dropdown was most recently changed) rather than this call's
-    own ``parameter`` -- otherwise switching to a tab whose own dropdown
-    still sits on its old value would show a stale color that visibly
-    disagreed with the now-recolored background/sidebar/etc. The values
-    (min/mean/max/...) still come from ``parameter``/``subset`` as always;
-    only the box *color* is shared app-wide. It's injected below as a
-    <style> block scoped to this call's own ``key_prefix``, since all tabs'
-    bodies run in the same Streamlit script pass (st.tabs only hides the
-    other panels in the DOM, it doesn't skip rendering them) and a global
-    `:root` color variable would leak whichever tab rendered last into
-    every other tab. ``key_prefix`` must be unique per calling tab
-    (Streamlit requires unique widget/container keys app-wide) -- callers
-    pass their own selectbox key, which is already unique per tab."""
-    stats = compute_parameter_stats(subset, parameter)
+    ``display_label`` overrides the card titles (used when the cards
+    should read a composite's own name, e.g. "Temperature", rather than
+    ``parameter``'s name).
+    """
+    stats = stats if stats is not None else compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
-    label = pretty_name(parameter)
+    label = display_label or pretty_name(parameter)
     active_parameter = st.session_state.get("active_theme_parameter", parameter)
     accent_hex = ACCENT_HEX_BY_CATEGORY[categorize_parameter(active_parameter)]
 
@@ -114,45 +93,34 @@ def render_stats_toolbar(subset: pd.DataFrame, parameter: str, key_prefix: str) 
             st.metric(title, value)
 
 
-def render_parameter_and_subset(raw: pd.DataFrame, key: str, show_stats: bool = True) -> tuple[str, pd.DataFrame]:
+def render_parameter_and_subset(
+    raw: pd.DataFrame, key: str, show_stats: bool = True, collapse_composites: bool = False
+) -> tuple[str, pd.DataFrame]:
     """Render a "Parameter" selectbox scoped to one tab and filter ``raw`` to it.
 
-    The label is drawn manually (M3 "Title Medium" scale -- same 16px/600/
-    0.15px-tracking/0.5rem-margin treatment as "Key Figures:" in
-    render_stats_toolbar(), so the two section labels in this column read
-    as one consistent scale rather than two different sizes) rather than
-    left as the selectbox's own native label -- CSS alone can't target just
-    this widget's label by text content, and this app has other selectboxes
-    (e.g. "Forecast city") that shouldn't also pick up this styling as a
-    side effect. The color matches the app's accent-blue used everywhere
-    else (WeatheRe brand text, "Key Figures:", tab-selected color).
-    label_visibility="collapsed" removes the selectbox's own label and its
-    reserved space entirely so it isn't duplicated underneath.
-
-    ``show_stats`` renders render_stats_toolbar() directly below the
-    dropdown, above whatever chart the caller builds from the returned
-    subset -- on by default, since every current caller wants it; the
-    escape hatch exists for a future tab that doesn't.
-
-    This is also the single place that feeds app.py's app-wide dynamic
-    theme (see apply_dynamic_theme() in src/ui_theme.py): every tab has
-    its own independent "Parameter" dropdown, so there's no one "current"
-    parameter to theme the whole page on -- instead, whichever dropdown's
-    value actually *changed* since its own last render is recorded as
-    st.session_state["active_theme_parameter"], so the background/sidebar/
-    etc. follow whichever one the user most recently touched, regardless
-    of which tab it's in."""
+    ``collapse_composites`` replaces each group's component parameters
+    (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py) with one grouped
+    dropdown entry. When a composite is selected, the returned ``subset``
+    contains every one of its components' rows; the Key Figures toolbar
+    underneath uses that composite's own ``stats_fn`` if it has one
+    (currently just "Temperature"), otherwise falls back to the default:
+    compute_parameter_stats() on just the composite's "primary" parameter.
+    """
     render_section_label("Parameter")
+
+    available_parameters = set(raw["parameter"].unique())
+    options = available_parameters
+    if collapse_composites:
+        for composite_key, group in COMPOSITE_PARAMETER_GROUPS.items():
+            components = set(group["components"])
+            if available_parameters & components:
+                options = (options - components) | {composite_key}
+
     parameter = st.selectbox(
         "Parameter",
-        sorted(raw["parameter"].unique()),
+        sorted(options),
         key=key,
         label_visibility="collapsed",
-        # format_func only changes what's *displayed* for each option --
-        # the value this function returns (and everything downstream that
-        # filters `raw` on it) is still the raw snake_case parameter name,
-        # so callers don't need their own pretty_name() lookup just to
-        # re-derive which rows to filter.
         format_func=pretty_name,
     )
     prev_value_key = f"_theme_prev_{key}"
@@ -160,7 +128,24 @@ def render_parameter_and_subset(raw: pd.DataFrame, key: str, show_stats: bool = 
         st.session_state["active_theme_parameter"] = parameter
     st.session_state[prev_value_key] = parameter
 
-    subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
-    if show_stats:
-        render_stats_toolbar(subset, parameter, key_prefix=key)
+    if parameter in COMPOSITE_PARAMETER_GROUPS:
+        group = COMPOSITE_PARAMETER_GROUPS[parameter]
+        subset = raw[raw["parameter"].isin(group["components"])].dropna(subset=["value"])
+        if show_stats:
+            stats_fn = group.get("stats_fn")
+            if stats_fn is not None:
+                render_stats_toolbar(
+                    subset, group["primary"], key_prefix=key,
+                    display_label=pretty_name(parameter), stats=stats_fn(subset),
+                )
+            else:
+                stats_subset = raw[raw["parameter"] == group["primary"]].dropna(subset=["value"])
+                render_stats_toolbar(
+                    stats_subset, group["primary"], key_prefix=key, display_label=pretty_name(parameter)
+                )
+    else:
+        subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
+        if show_stats:
+            render_stats_toolbar(subset, parameter, key_prefix=key)
+
     return parameter, subset
