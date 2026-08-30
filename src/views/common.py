@@ -181,6 +181,15 @@ def _station_missing_reason(
     3. Rows exist for this station+parameter, but ``value`` was NaN for
        every one of them in this range -- a genuine data gap rather than
        an unsupported parameter.
+
+    ``parameter`` may be a composite key (e.g. "temperature") rather than
+    a real DWD parameter -- COMPOSITE_PARAMETER_GROUPS[parameter] never
+    appears as a value in ``raw["parameter"]`` itself (see
+    render_parameter_and_subset()'s docstring), so cause 2/3 above are
+    checked against every one of that composite's *components* instead:
+    a station only "does not report" the composite if it has zero rows
+    for every one of them, and only has a "data gap" if it has rows for
+    at least one component but none with a valid value.
     """
     if station_id in metadata.index:
         station_start = metadata.loc[station_id, "start_date"]
@@ -193,7 +202,10 @@ def _station_missing_reason(
                     f"(reports {station_start:%d/%m/%Y}–{station_end:%d/%m/%Y})"
                 )
 
-    station_rows = raw[(raw["station_id"] == station_id) & (raw["parameter"] == parameter)]
+    component_parameters = (
+        COMPOSITE_PARAMETER_GROUPS[parameter]["components"] if parameter in COMPOSITE_PARAMETER_GROUPS else [parameter]
+    )
+    station_rows = raw[(raw["station_id"] == station_id) & (raw["parameter"].isin(component_parameters))]
     if station_rows.empty:
         return f"does not report {pretty_name(parameter)}"
     return f"has no {pretty_name(parameter)} readings in the selected date range (data gap)"

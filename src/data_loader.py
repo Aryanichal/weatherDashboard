@@ -11,15 +11,34 @@ version: https://wetterdienst.readthedocs.io/
 
 from datetime import UTC, datetime
 from pathlib import Path
+from zipfile import BadZipFile
 
 import pandas as pd
 import streamlit as st
 from wetterdienst import Settings
+from wetterdienst.exceptions import ProductFileNotFoundError
 from wetterdienst.provider.dwd.observation import DwdObservationRequest
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DATA_DIR.mkdir(exist_ok=True)
 SETTINGS = Settings(cache_dir=DATA_DIR / ".wetterdienst-cache")
+
+# DWD ships each station's data as a ZIP archive; wetterdienst raises one of
+# these two when an archive can't be read -- BadZipFile for a corrupted/
+# truncated download, ProductFileNotFoundError when the archive unpacked
+# fine but didn't contain the expected "produkt*" file. get_station_data()
+# below retries once with caching disabled before giving up (see its
+# docstring), so by the time either of these actually surfaces to a caller,
+# retrying transparently already didn't help.
+_ARCHIVE_ERRORS = (BadZipFile, ProductFileNotFoundError)
+
+
+class WeatherDataFetchError(Exception):
+    """Raised when DWD's observation archive can't be read, even after
+    get_station_data()'s own retry with the local cache bypassed. Callers
+    (view modules) should catch this and show a plain-language message
+    instead of letting the original zipfile/wetterdienst traceback surface,
+    since neither means anything to a user picking stations in the sidebar."""
 
 CLIMATE_SUMMARY = ("daily", "climate_summary")
 REQUEST_PARAMETERS = [CLIMATE_SUMMARY]
@@ -74,6 +93,22 @@ def get_station_data(
     station_ids: DWD station ids, e.g. ["00433", "01048"] (Berlin-Tempelhof, Dresden-Klotzsche)
     start_date / end_date: "YYYY-MM-DD"
     cache: reuse a local parquet cache under data/ instead of re-downloading
+
+    Raises
+    ------
+    WeatherDataFetchError
+        If DWD's per-station ZIP archive can't be read even after a retry
+        (see below) -- e.g. an interrupted download left a truncated file,
+        or DWD's own server briefly served a bad copy. wetterdienst caches
+        the downloaded archive under SETTINGS.cache_dir with only a 5-minute
+        TTL (see download_climate_observations_data() in wetterdienst's own
+        download.py), so a corrupted download would otherwise keep failing
+        identically for up to 5 minutes -- every retry would just re-read
+        the same corrupted bytes back off disk. Retrying once with a
+        cache-disabled copy of the settings instead forces an immediate
+        fresh download, which self-heals the common case (a one-off
+        network blip) without the caller needing to wait out the TTL or
+        clear the cache directory by hand.
     """
     # Include requested datasets in the cache name so a change from, for
     # example, climate summaries to wind data triggers a fresh download.
@@ -90,7 +125,24 @@ def get_station_data(
         settings=SETTINGS,
     ).filter_by_station_id(station_id=station_ids)
 
-    df = request.values.all().df.to_pandas()
+    try:
+        df = request.values.all().df.to_pandas()
+    except _ARCHIVE_ERRORS:
+        retry_settings = SETTINGS.model_copy(update={"cache_disable": True})
+        retry_request = DwdObservationRequest(
+            parameters=REQUEST_PARAMETERS,
+            start_date=start_date,
+            end_date=end_date,
+            settings=retry_settings,
+        ).filter_by_station_id(station_id=station_ids)
+        try:
+            df = retry_request.values.all().df.to_pandas()
+        except _ARCHIVE_ERRORS as exc:
+            raise WeatherDataFetchError(
+                "DWD's weather data archive is temporarily unreachable or returned a "
+                "corrupted file. This is usually transient -- please try again in a "
+                "moment, or try again with fewer stations or a narrower date range."
+            ) from exc
 
     if cache:
         df.to_parquet(cache_path)

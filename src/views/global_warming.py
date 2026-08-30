@@ -20,6 +20,7 @@ from src.data_loader import (
     ANOMALY_BASELINE_END_YEAR,
     ANOMALY_BASELINE_START_YEAR,
     TREND_START_YEAR,
+    WeatherDataFetchError,
     load_climate_change_indicators,
     load_hot_days_data,
     load_long_run_data,
@@ -192,16 +193,20 @@ def _render_trend_tab(ctx: DashboardContext) -> None:
         gw_hot_night_threshold = st.number_input("Hot night threshold (°C)", value=20.0, step=1.0)
         gw_heavy_rain_threshold = st.number_input("Heavy-rain threshold (mm)", value=20.0, step=1.0)
 
-    climate_indicators = load_climate_change_indicators(
-        city_stations,
-        gw_start_year,
-        gw_baseline_start_year,
-        gw_baseline_end_year,
-        gw_hot_night_threshold,
-        gw_heavy_rain_threshold,
-    )
-    long_run_data = load_long_run_data(city_stations, gw_start_year, gw_month)
-    hot_days_data = load_hot_days_data(city_stations, gw_start_year, gw_hot_day_threshold)
+    try:
+        climate_indicators = load_climate_change_indicators(
+            city_stations,
+            gw_start_year,
+            gw_baseline_start_year,
+            gw_baseline_end_year,
+            gw_hot_night_threshold,
+            gw_heavy_rain_threshold,
+        )
+        long_run_data = load_long_run_data(city_stations, gw_start_year, gw_month)
+        hot_days_data = load_hot_days_data(city_stations, gw_start_year, gw_hot_day_threshold)
+    except WeatherDataFetchError as exc:
+        st.error(f"Couldn't load weather data: {exc}")
+        return
     _warn_about_missing_coverage(city_stations, climate_indicators, long_run_data, hot_days_data)
 
     month_name = calendar.month_name[gw_month]
@@ -334,7 +339,7 @@ def _render_prediction_tab() -> None:
     )
     try:
         forecasts, forecast_metrics, forecast_history = load_forecasts(FORECAST_CACHE_VERSION)
-    except (ValueError, KeyError) as error:
+    except (ValueError, KeyError, WeatherDataFetchError) as error:
         st.error(f"Unable to prepare the future-trend forecast: {error}")
         return
 

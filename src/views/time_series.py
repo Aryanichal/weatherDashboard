@@ -25,11 +25,24 @@ from src.views.common import (
 
 _MISSING_ANCHOR = "missing-stations-parameter_series"
 _CHART_CARD_KEY = "chart-card-parameter_series"
+_TEMPERATURE_FEATURED_CARD_KEY = "chart-card-parameter_series-temperature-featured"
+_PRECIPITATION_HEIGHT_CARD_KEY = "chart-card-parameter_series-precipitation-height"
 
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
 _GRID_COLUMNS = 2
 _FEATURED_CHART_HEIGHT = 480
+
+# Missing-station icon offsets (see render_missing_stations_indicator() in
+# common.py), each measured via getBoundingClientRect() against its own
+# chart's card the same way the plain single-chart branch's 73px/98px
+# were -- kept as separate constants per chart shape rather than one
+# shared pair since there's no guarantee they stay this close for a chart
+# of a substantially different height/width; they just happened to land
+# on nearly the same values here (73px/92px) for both the featured
+# (480px-tall) and grid (340px-tall, half-width) charts.
+_FEATURED_ICON_TOP, _FEATURED_ICON_RIGHT = "73px", "92px"
+_GRID_ICON_TOP, _GRID_ICON_RIGHT = "73px", "92px"
 
 # Short labels for the band-chart trend-line toggle, and which of the
 # other two 2m series bound the shaded band (low, high) for each choice.
@@ -196,26 +209,64 @@ def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _render_featured_chart(fig: go.Figure) -> None:
+def _render_featured_chart(
+    fig: go.Figure, missing: list[dict[str, str]] | None = None, card_key: str | None = None
+) -> None:
     """Render one chart full-width at the taller "featured" height, above
-    whatever grid of smaller charts follows it."""
+    whatever grid of smaller charts follows it.
+
+    ``missing``/``card_key``, when given, overlay the missing-station
+    warning icon (see render_missing_stations_indicator() in common.py)
+    next to this chart's own "Station" legend title -- ``card_key`` must
+    then be unique app-wide (it becomes this chart_card()'s own key).
+    _FEATURED_ICON_TOP/_RIGHT are this height's own measured offsets,
+    distinct from the plain single-chart branch's (_render_chart() has no
+    counterpart here -- this is always taller), since the icon has to sit
+    at the legend's own vertical position and that moves with chart
+    height (see render_missing_stations_indicator()'s docstring)."""
     fig.update_layout(height=_FEATURED_CHART_HEIGHT)
-    with chart_card():
+    with chart_card(key=card_key):
+        if missing and card_key:
+            render_missing_stations_indicator(
+                missing, _MISSING_ANCHOR, card_key=card_key, top=_FEATURED_ICON_TOP, right=_FEATURED_ICON_RIGHT
+            )
         render_chart(fig)
 
 
-def _render_chart_grid(figs: list[go.Figure], columns: int = _GRID_COLUMNS) -> None:
+def _render_chart_grid(
+    figs: list[go.Figure],
+    columns: int = _GRID_COLUMNS,
+    missing: list[dict[str, str]] | None = None,
+    icon_card_key: str | None = None,
+) -> None:
     """Lay out ``figs`` in a fixed-column grid instead of stacking each one
     full-width, so a typical desktop viewport shows multiple charts at
-    once without scrolling."""
+    once without scrolling.
+
+    ``missing``/``icon_card_key``, when given, overlay the missing-station
+    warning icon (see render_missing_stations_indicator() in common.py) on
+    just the *first* chart's card -- one pointer per parameter view is
+    enough (the full breakdown is always the notice banner rendered below
+    the whole section), and the first chart is each composite's "primary"
+    component (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py), so it's
+    the one most representative of the parameter as a whole. ``icon_card_key``
+    must be unique app-wide (it becomes that one chart_card()'s own key);
+    every other card in the grid stays unkeyed, as before."""
     for fig in figs:
         fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
+    is_first = True
     for start in range(0, len(figs), columns):
         row_figs = figs[start : start + columns]
         row_columns = st.columns(len(row_figs))
         for col, fig in zip(row_columns, row_figs):
-            with col, chart_card():
+            card_key = icon_card_key if is_first else None
+            with col, chart_card(key=card_key):
+                if is_first and missing and icon_card_key:
+                    render_missing_stations_indicator(
+                        missing, _MISSING_ANCHOR, card_key=icon_card_key, top=_GRID_ICON_TOP, right=_GRID_ICON_RIGHT
+                    )
                 render_chart(fig)
+            is_first = False
 
 
 def render(ctx: DashboardContext) -> None:
@@ -241,20 +292,26 @@ def render(ctx: DashboardContext) -> None:
         # letting the chart below break.
         trend_parameter = _TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label or "Mean"]
 
-        _render_featured_chart(_render_temperature_band(band_subset, trend_parameter))
+        _render_featured_chart(
+            _render_temperature_band(band_subset, trend_parameter),
+            missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY,
+        )
         _render_chart_grid(
             [
                 _render_ground_frost_chart(subset),
                 _render_monthly_average_chart(subset),
             ]
         )
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == PRECIPITATION_COMPOSITE_KEY:
         _render_chart_grid(
             [
                 _render_precipitation_height_chart(subset),
                 _render_precipitation_form_chart(subset),
-            ]
+            ],
+            missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY,
         )
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
     else:
         fig = px.line(
             subset, x="date", y="value", color="station_name",

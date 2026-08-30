@@ -9,7 +9,7 @@ import datetime as dt
 import streamlit as st
 
 from src.dashboard_context import DashboardContext
-from src.data_loader import load_data, load_stations
+from src.data_loader import WeatherDataFetchError, load_data, load_stations
 from src.ui_theme import apply_dynamic_theme, render_app_background, render_brand
 from src.views import clustering, global_warming, map_view, regression, time_series
 
@@ -51,7 +51,11 @@ if not selected_ids:
     st.info("Select at least one station in the sidebar to load data.")
     st.stop()
 
-raw = load_data(selected_ids, str(start_date), str(end_date))
+try:
+    raw = load_data(selected_ids, str(start_date), str(end_date))
+except WeatherDataFetchError as exc:
+    st.error(f"Couldn't load weather data: {exc}")
+    st.stop()
 
 if raw.empty:
     st.warning("No data returned for this selection.")
