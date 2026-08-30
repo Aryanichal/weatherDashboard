@@ -268,9 +268,11 @@ def render_parameter_and_subset(
         format_func=_dropdown_label,
     )
 
-    canonical_parameter = (
-        COMPOSITE_PARAMETER_GROUPS[parameter]["primary"] if parameter in COMPOSITE_PARAMETER_GROUPS else parameter
-    )
+    if parameter in COMPOSITE_PARAMETER_GROUPS:
+        group_for_canonical = COMPOSITE_PARAMETER_GROUPS[parameter]
+        canonical_parameter = group_for_canonical.get("primary", group_for_canonical["components"][0])
+    else:
+        canonical_parameter = parameter
     st.session_state[_SHARED_PARAMETER_KEY] = canonical_parameter
 
     prev_value_key = f"_theme_prev_{key}"
