@@ -6,11 +6,18 @@ import streamlit as st
 from src.analysis import fit_trend
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
-from src.views.common import pretty_name, render_parameter_and_subset, render_section_label
+from src.views.common import (
+    missing_station_reason,
+    pretty_name,
+    render_parameter_and_subset,
+    render_section_label,
+)
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_regression")
+    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_regression", collapse_composites=True
+    )
     render_section_label("Station")
     station_for_trend = st.selectbox(
         "Station", ctx.selected_names, key="trend_station", label_visibility="collapsed"
@@ -19,7 +26,14 @@ def render(ctx: DashboardContext) -> None:
     trend_input = subset[subset["station_id"] == station_id]
 
     if len(trend_input) < 2:
-        st.info("Not enough data points for a trend line.")
+        if trend_input.empty:
+            reason = missing_station_reason(ctx, parameter, station_id, ctx.start_date, ctx.end_date)
+            st.info(f"No trend for {station_for_trend} -- {reason}.")
+        else:
+            st.info(
+                f"Only one {pretty_name(parameter)} reading for {station_for_trend} in the "
+                f"selected date range -- at least two are needed to fit a trend."
+            )
         return
 
     result = fit_trend(trend_input)

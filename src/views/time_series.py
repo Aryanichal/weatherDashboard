@@ -12,28 +12,47 @@ from src.analysis import (
     TEMPERATURE_COMPOSITE_KEY,
     TEMPERATURE_GROUND_PARAMETER,
     TEMPERATURE_PRIMARY_PARAMETER,
+    TEMPERATURE_TREND_LABELS,
 )
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
-from src.views.common import pretty_name, render_parameter_and_subset
+from src.views.common import (
+    find_stations_missing_data,
+    pretty_name,
+    render_missing_stations_indicator,
+    render_missing_stations_notice,
+    render_parameter_and_subset,
+)
+
+_MISSING_ANCHOR = "missing-stations-parameter_series"
+_CHART_CARD_KEY = "chart-card-parameter_series"
+_TEMPERATURE_FEATURED_CARD_KEY = "chart-card-parameter_series-temperature-featured"
+_PRECIPITATION_HEIGHT_CARD_KEY = "chart-card-parameter_series-precipitation-height"
 
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
 _GRID_COLUMNS = 2
 _FEATURED_CHART_HEIGHT = 480
 
-# Short labels for the band-chart trend-line toggle, and which of the
-# other two 2m series bound the shaded band (low, high) for each choice.
+# Missing-station icon offsets (see render_missing_stations_indicator() in
+# common.py), each measured via getBoundingClientRect() against its own
+# chart's card the same way the plain single-chart branch's 73px/98px
+# were -- kept as separate constants per chart shape rather than one
+# shared pair since there's no guarantee they stay this close for a chart
+# of a substantially different height/width; they just happened to land
+# on nearly the same values here (73px/92px) for both the featured
+# (480px-tall) and grid (340px-tall, half-width) charts.
+_FEATURED_ICON_TOP, _FEATURED_ICON_RIGHT = "73px", "92px"
+_GRID_ICON_TOP, _GRID_ICON_RIGHT = "73px", "92px"
+
+# Which of the other two 2m series bound the shaded band (low, high) for
+# each trend-line choice (see TEMPERATURE_TREND_LABELS in src/analysis.py,
+# shared with -- and rendered by -- render_parameter_and_subset() in
+# src/views/common.py now, not this view specifically).
 # temperature_air_min_2m/_max_2m always occupy the low/high slot no
 # matter what -- min <= mean <= max always holds in DWD's climate_summary
 # -- only temperature_air_mean_2m ever moves between being the line and
 # being a band edge.
-_TEMPERATURE_TREND_LABELS = {
-    "temperature_air_mean_2m": "Mean",
-    "temperature_air_max_2m": "Max",
-    "temperature_air_min_2m": "Min",
-}
-_TEMPERATURE_TREND_PARAMETER_BY_LABEL = {label: param for param, label in _TEMPERATURE_TREND_LABELS.items()}
 _TEMPERATURE_BAND_BOUNDS = {
     "temperature_air_mean_2m": ("temperature_air_min_2m", "temperature_air_max_2m"),
     "temperature_air_max_2m": ("temperature_air_min_2m", "temperature_air_mean_2m"),
@@ -58,9 +77,9 @@ def _render_temperature_band(subset: pd.DataFrame, trend_parameter: str) -> go.F
     band's lower and upper edge, via _TEMPERATURE_BAND_BOUNDS. ``subset``
     must already be filtered to just the three 2m parameters."""
     low_parameter, high_parameter = _TEMPERATURE_BAND_BOUNDS[trend_parameter]
-    trend_label = _TEMPERATURE_TREND_LABELS[trend_parameter]
-    low_label = _TEMPERATURE_TREND_LABELS[low_parameter]
-    high_label = _TEMPERATURE_TREND_LABELS[high_parameter]
+    trend_label = TEMPERATURE_TREND_LABELS[trend_parameter]
+    low_label = TEMPERATURE_TREND_LABELS[low_parameter]
+    high_label = TEMPERATURE_TREND_LABELS[high_parameter]
 
     wide = subset.pivot_table(index=["station_name", "date"], columns="parameter", values="value").reset_index()
     wide = wide.sort_values(["station_name", "date"])
@@ -187,59 +206,105 @@ def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
     return fig
 
 
-def _render_featured_chart(fig: go.Figure) -> None:
+def _render_featured_chart(
+    fig: go.Figure, missing: list[dict[str, str]] | None = None, card_key: str | None = None
+) -> None:
     """Render one chart full-width at the taller "featured" height, above
-    whatever grid of smaller charts follows it."""
+    whatever grid of smaller charts follows it.
+
+    ``missing``/``card_key``, when given, overlay the missing-station
+    warning icon (see render_missing_stations_indicator() in common.py)
+    next to this chart's own "Station" legend title -- ``card_key`` must
+    then be unique app-wide (it becomes this chart_card()'s own key).
+    _FEATURED_ICON_TOP/_RIGHT are this height's own measured offsets,
+    distinct from the plain single-chart branch's (_render_chart() has no
+    counterpart here -- this is always taller), since the icon has to sit
+    at the legend's own vertical position and that moves with chart
+    height (see render_missing_stations_indicator()'s docstring)."""
     fig.update_layout(height=_FEATURED_CHART_HEIGHT)
-    with chart_card():
+    with chart_card(key=card_key):
+        if missing and card_key:
+            render_missing_stations_indicator(
+                missing, _MISSING_ANCHOR, card_key=card_key, top=_FEATURED_ICON_TOP, right=_FEATURED_ICON_RIGHT
+            )
         render_chart(fig)
 
 
-def _render_chart_grid(figs: list[go.Figure], columns: int = _GRID_COLUMNS) -> None:
+def _render_chart_grid(
+    figs: list[go.Figure],
+    columns: int = _GRID_COLUMNS,
+    missing: list[dict[str, str]] | None = None,
+    icon_card_key: str | None = None,
+) -> None:
     """Lay out ``figs`` in a fixed-column grid instead of stacking each one
     full-width, so a typical desktop viewport shows multiple charts at
-    once without scrolling."""
+    once without scrolling.
+
+    ``missing``/``icon_card_key``, when given, overlay the missing-station
+    warning icon (see render_missing_stations_indicator() in common.py) on
+    just the *first* chart's card -- one pointer per parameter view is
+    enough (the full breakdown is always the notice banner rendered below
+    the whole section), and the first chart is each composite's "primary"
+    component (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py), so it's
+    the one most representative of the parameter as a whole. ``icon_card_key``
+    must be unique app-wide (it becomes that one chart_card()'s own key);
+    every other card in the grid stays unkeyed, as before."""
     for fig in figs:
         fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
+    is_first = True
     for start in range(0, len(figs), columns):
         row_figs = figs[start : start + columns]
         row_columns = st.columns(len(row_figs))
         for col, fig in zip(row_columns, row_figs):
-            with col, chart_card():
+            card_key = icon_card_key if is_first else None
+            with col, chart_card(key=card_key):
+                if is_first and missing and icon_card_key:
+                    render_missing_stations_indicator(
+                        missing, _MISSING_ANCHOR, card_key=icon_card_key, top=_GRID_ICON_TOP, right=_GRID_ICON_RIGHT
+                    )
                 render_chart(fig)
+            is_first = False
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_series", collapse_composites=True)
+    parameter, subset, effective_parameter, _effective_subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_series", collapse_composites=True
+    )
+    missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
+
+    if subset.empty:
+        st.caption(f"No {pretty_name(parameter)} data for any selected station in this date range.")
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        return
 
     if parameter == TEMPERATURE_COMPOSITE_KEY:
         band_subset = subset[subset["parameter"].isin(TEMPERATURE_COMPONENT_PARAMETERS)]
 
-        trend_label = st.segmented_control(
-            "Trend line",
-            options=list(_TEMPERATURE_TREND_PARAMETER_BY_LABEL),
-            default="Mean",
-            key="temperature_trend_line",
+        # The Mean/Max/Min trend-line toggle itself was already rendered
+        # by render_parameter_and_subset() above (shared across every view
+        # that offers the Temperature composite, not just this one --
+        # see its docstring) -- effective_parameter is exactly which of
+        # the three 2m series it currently has selected.
+        _render_featured_chart(
+            _render_temperature_band(band_subset, effective_parameter),
+            missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY,
         )
-        # segmented_control returns None if the user clicks the selected
-        # option again to deselect it -- fall back to Mean rather than
-        # letting the chart below break.
-        trend_parameter = _TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label or "Mean"]
-
-        _render_featured_chart(_render_temperature_band(band_subset, trend_parameter))
         _render_chart_grid(
             [
                 _render_ground_frost_chart(subset),
                 _render_monthly_average_chart(subset),
             ]
         )
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == PRECIPITATION_COMPOSITE_KEY:
         _render_chart_grid(
             [
                 _render_precipitation_height_chart(subset),
                 _render_precipitation_form_chart(subset),
-            ]
+            ],
+            missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY,
         )
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
     else:
         fig = px.line(
             subset, x="date", y="value", color="station_name",
@@ -247,5 +312,7 @@ def render(ctx: DashboardContext) -> None:
             labels={"value": pretty_name(parameter), "station_name": "Station"},
         )
         fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
-        with chart_card():
+        with chart_card(key=_CHART_CARD_KEY):
+            render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
             render_chart(fig)
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
