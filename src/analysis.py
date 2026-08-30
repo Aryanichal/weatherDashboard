@@ -86,6 +86,18 @@ TEMPERATURE_GROUND_PARAMETER = "temperature_air_min_0_05m"
 TEMPERATURE_ALL_PARAMETERS = TEMPERATURE_COMPONENT_PARAMETERS + [TEMPERATURE_GROUND_PARAMETER]
 TEMPERATURE_PRIMARY_PARAMETER = "temperature_air_mean_2m"
 
+# Mean/Max/Min trend-line toggle for the "Temperature" composite -- shared
+# by every view that offers it (see render_parameter_and_subset() in
+# src/views/common.py), not just Time Series' own band chart, so this
+# lives here rather than in time_series.py alongside the other
+# composite-wide constants above.
+TEMPERATURE_TREND_LABELS = {
+    "temperature_air_mean_2m": "Mean",
+    "temperature_air_max_2m": "Max",
+    "temperature_air_min_2m": "Min",
+}
+TEMPERATURE_TREND_PARAMETER_BY_LABEL = {label: param for param, label in TEMPERATURE_TREND_LABELS.items()}
+
 PRECIPITATION_COMPOSITE_KEY = "precipitation"
 PRECIPITATION_COMPONENT_PARAMETERS = ["precipitation_height", "precipitation_form"]
 PRECIPITATION_PRIMARY_PARAMETER = "precipitation_height"

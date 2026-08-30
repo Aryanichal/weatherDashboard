@@ -38,7 +38,7 @@ class WeatherDataFetchError(Exception):
     get_station_data()'s own retry with the local cache bypassed. Callers
     (view modules) should catch this and show a plain-language message
     instead of letting the original zipfile/wetterdienst traceback surface,
-    since neither means anything to a user picking stations in the sidebar."""
+    since neither means anything to a user picking weather stations."""
 
 CLIMATE_SUMMARY = ("daily", "climate_summary")
 REQUEST_PARAMETERS = [CLIMATE_SUMMARY]

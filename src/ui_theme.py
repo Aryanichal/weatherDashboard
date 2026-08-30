@@ -108,8 +108,7 @@ _BASE_CSS = """
     justify-content: center;
 }
 
-[data-testid="stAppViewContainer"] .main .block-container,
-[data-testid="stSidebar"] {
+[data-testid="stAppViewContainer"] .main .block-container {
     position: relative;
     z-index: 2;
 }
@@ -139,11 +138,55 @@ _BASE_CSS = """
 [data-testid="stVerticalBlock"] {
     gap: 0.5rem !important;
 }
-[data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] {
-    gap: 1rem !important;
-}
 [data-testid="stHeader"] {
     height: 2rem;
+}
+/* Every st.segmented_control() in the app -- the main navigation (see
+   app.py; standing in for st.tabs() so a shared station/date-range row
+   can sit between the nav and whichever view is showing, which a real
+   tab bar can't host since its header and content are one atomic widget)
+   and the Temperature composite's Mean/Max/Min trend-line toggle (see
+   _render_temperature_band()'s caller in src/views/time_series.py) --
+   both render through this same [data-testid="stButtonGroup"] widget, so
+   one shared rule styles every option as the same rounded-card look
+   chart_card() below uses, with the active option picked out by a solid
+   fill of the app's current accent color (var(--m3-primary), the same
+   one driving the "Key Figures" stat-accent boxes) rather than a second,
+   different "selected" treatment. */
+[data-testid="stButtonGroup"] {
+    gap: 0.75rem !important;
+}
+[data-testid="stButtonGroup"] button {
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+        color-mix(in srgb, color-mix(in srgb, white 80%, var(--m3-surface-container-low, #D8E2EC) 20%) 80%, transparent) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
+    border: 1px solid rgba(255, 255, 255, 0.5) !important;
+    border-radius: 24px !important;
+    box-shadow: 0 12px 32px rgba(28, 42, 59, 0.16) !important;
+    color: var(--m3-on-surface-variant, #52657A) !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+    padding: 0.5rem 1.25rem !important;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, font-weight 0.15s ease;
+}
+[data-testid="stButtonGroup"] button p {
+    font-size: inherit !important;
+    font-weight: inherit !important;
+}
+[data-testid="stButtonGroup"] button[aria-checked="true"] {
+    background: color-mix(in srgb, var(--m3-primary, #4D77CB) 80%, white) !important;
+    border-color: color-mix(in srgb, var(--m3-primary, #4D77CB) 80%, white) !important;
+    color: #FFFFFF !important;
+    font-weight: 700 !important;
+}
+/* Real st.tabs() styling, still needed for the Global Warming view's own
+   "Global Warming Trend"/"Future Prediction" sub-tabs (see
+   src/views/global_warming.py) even though the top-level nav above no
+   longer uses st.tabs(). */
+[data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] {
+    gap: 1rem !important;
 }
 [data-testid="stTab"] p {
     font-weight: 500 !important;
@@ -172,28 +215,6 @@ _BASE_CSS = """
 }
 [data-testid="stTab"][aria-selected="true"] p {
     color: color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent) !important;
-}
-[data-testid="stSidebar"] {
-    background: var(--m3-surface-container, #D5E2F0);
-    margin: 0.25rem 0 0.25rem 1rem;
-    border-radius: 20px;
-    border: 1px solid color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 40%, transparent);
-    box-shadow: 0 8px 24px rgba(28, 42, 59, 0.08);
-    overflow: hidden;
-    height: calc(100vh - 0.5rem);
-    transition: min-width 0.15s ease, max-width 0.15s ease, width 0.15s ease;
-}
-[data-testid="stSidebar"] > div:first-child,
-[data-testid="stSidebarContent"] {
-    padding-top: 0.5rem;
-}
-[data-testid="stSidebar"] label,
-[data-testid="stSidebar"] p:not([data-testid="stDateInput"] *),
-[data-testid="stSidebar"] h1,
-[data-testid="stSidebar"] h2,
-[data-testid="stSidebar"] h3,
-[data-testid="stSidebar"] span:not([data-baseweb="tag"] *):not([data-testid="stDateInput"] [data-baseweb="input"] *):not([data-rac]) {
-    color: var(--m3-on-surface-variant, #52657A) !important;
 }
 [data-testid="stDateInput"] label {
     font-weight: 600 !important;
@@ -226,19 +247,14 @@ _BASE_CSS = """
 [data-testid="stMultiSelect"] [data-baseweb="select"],
 [data-testid="stSelectbox"] [data-baseweb="select"],
 [data-testid="stMultiSelect"] [role="group"][data-rac],
-[data-testid="stSelectbox"] [role="group"][data-rac] {
+[data-testid="stSelectbox"] [role="group"][data-rac],
+[data-testid="stDateInputField"] {
     background: color-mix(in srgb, var(--m3-surface-container-lowest, #F9FAFB) 94%, transparent) !important;
     border: none !important;
     outline: none !important;
     border-radius: 10px !important;
     box-shadow: 0 4px 14px rgba(28, 42, 59, 0.12);
     transition: box-shadow 0.15s ease;
-}
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] [data-baseweb="select"],
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [data-baseweb="select"],
-[data-testid="stSidebar"] [data-testid="stMultiSelect"] [role="group"][data-rac],
-[data-testid="stSidebar"] [data-testid="stSelectbox"] [role="group"][data-rac] {
-    box-shadow: none;
 }
 [data-testid="stNumberInputContainer"] {
     background: color-mix(in srgb, var(--m3-surface-container-low, #D8E2EC) 60%, transparent) !important;
@@ -251,7 +267,8 @@ _BASE_CSS = """
 [data-testid="stMultiSelect"]:focus-within [data-baseweb="select"],
 [data-testid="stSelectbox"]:focus-within [data-baseweb="select"],
 [data-testid="stMultiSelect"]:focus-within [role="group"][data-rac],
-[data-testid="stSelectbox"]:focus-within [role="group"][data-rac] {
+[data-testid="stSelectbox"]:focus-within [role="group"][data-rac],
+[data-testid="stDateInput"]:focus-within [data-testid="stDateInputField"] {
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 22%, transparent) !important;
 }
 [data-testid="stExpander"] details {
@@ -318,19 +335,19 @@ def apply_dynamic_theme(parameter: str | None) -> None:
     CSS custom properties on :root apply document-wide regardless of where
     in the page's source their defining <style> tag sits, and the later of
     two equal-specificity :root rules wins -- so calling this once, after
-    every tab (and so every "Parameter" dropdown) has rendered, is enough
-    to re-theme the sidebar, page background, brand text, tabs, and every
-    other var()-driven color in one shot. It intentionally doesn't touch
-    Plotly chart colors (style_fig() in this module) -- those are baked
-    into each figure as literal RGB values at build time, not read from
-    CSS, and were deliberately kept on a fixed colorblind-friendly palette
-    per earlier feedback on this dashboard.
+    the current view (and so its own "Parameter" dropdown, if it has one)
+    has rendered, is enough to re-theme the page background, brand text,
+    nav row, and every other var()-driven color in one shot. It
+    intentionally doesn't touch Plotly chart colors (style_fig() in this
+    module) -- those are baked into each figure as literal RGB values at
+    build time, not read from CSS, and were deliberately kept on a fixed
+    colorblind-friendly palette per earlier feedback on this dashboard.
 
-    ``parameter`` is whichever of the several independent per-tab
+    ``parameter`` is whichever of the several independent per-view
     "Parameter" dropdowns the user most recently changed (tracked in
     st.session_state by render_parameter_and_subset() in
     src/views/common.py) -- there's no single "current" parameter since
-    every tab keeps its own selection, so this app-wide theme follows
+    every view keeps its own selection, so this app-wide theme follows
     whichever one was touched last, defaulting to "neutral" (this app's
     every dropdown defaults to the alphabetically-first parameter, which
     is "Cloud Cover Total") before the user has touched any of them."""
@@ -365,7 +382,7 @@ def _current_chart_title_color() -> str:
     """The chart title ("heading") color for whatever category the app-wide
     dynamic theme (see apply_dynamic_theme()) is currently on -- read from
     the same st.session_state["active_theme_parameter"] that theme uses, so
-    a chart's own heading always matches the background/sidebar/Key Figures
+    a chart's own heading always matches the background/nav row/Key Figures
     color it's currently sitting in. Only the *title* follows the theme;
     axis ticks/gridlines/legend text and the data lines themselves
     (_CHART_INK/_CHART_GRID, and each view's own px.line/... colors) stay

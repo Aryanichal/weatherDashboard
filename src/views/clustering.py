@@ -19,7 +19,9 @@ _CHART_CARD_KEY = "chart-card-parameter_clustering"
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_clustering")
+    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_clustering", collapse_composites=True
+    )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
 
     n_clusters = st.slider("Number of clusters", 2, 6, 3)

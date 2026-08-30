@@ -15,7 +15,9 @@ from src.views.common import (
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_regression")
+    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_regression", collapse_composites=True
+    )
     render_section_label("Station")
     station_for_trend = st.selectbox(
         "Station", ctx.selected_names, key="trend_station", label_visibility="collapsed"

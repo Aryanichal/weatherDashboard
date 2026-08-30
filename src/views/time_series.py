@@ -12,6 +12,7 @@ from src.analysis import (
     TEMPERATURE_COMPOSITE_KEY,
     TEMPERATURE_GROUND_PARAMETER,
     TEMPERATURE_PRIMARY_PARAMETER,
+    TEMPERATURE_TREND_LABELS,
 )
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
@@ -44,18 +45,14 @@ _FEATURED_CHART_HEIGHT = 480
 _FEATURED_ICON_TOP, _FEATURED_ICON_RIGHT = "73px", "92px"
 _GRID_ICON_TOP, _GRID_ICON_RIGHT = "73px", "92px"
 
-# Short labels for the band-chart trend-line toggle, and which of the
-# other two 2m series bound the shaded band (low, high) for each choice.
+# Which of the other two 2m series bound the shaded band (low, high) for
+# each trend-line choice (see TEMPERATURE_TREND_LABELS in src/analysis.py,
+# shared with -- and rendered by -- render_parameter_and_subset() in
+# src/views/common.py now, not this view specifically).
 # temperature_air_min_2m/_max_2m always occupy the low/high slot no
 # matter what -- min <= mean <= max always holds in DWD's climate_summary
 # -- only temperature_air_mean_2m ever moves between being the line and
 # being a band edge.
-_TEMPERATURE_TREND_LABELS = {
-    "temperature_air_mean_2m": "Mean",
-    "temperature_air_max_2m": "Max",
-    "temperature_air_min_2m": "Min",
-}
-_TEMPERATURE_TREND_PARAMETER_BY_LABEL = {label: param for param, label in _TEMPERATURE_TREND_LABELS.items()}
 _TEMPERATURE_BAND_BOUNDS = {
     "temperature_air_mean_2m": ("temperature_air_min_2m", "temperature_air_max_2m"),
     "temperature_air_max_2m": ("temperature_air_min_2m", "temperature_air_mean_2m"),
@@ -80,9 +77,9 @@ def _render_temperature_band(subset: pd.DataFrame, trend_parameter: str) -> go.F
     band's lower and upper edge, via _TEMPERATURE_BAND_BOUNDS. ``subset``
     must already be filtered to just the three 2m parameters."""
     low_parameter, high_parameter = _TEMPERATURE_BAND_BOUNDS[trend_parameter]
-    trend_label = _TEMPERATURE_TREND_LABELS[trend_parameter]
-    low_label = _TEMPERATURE_TREND_LABELS[low_parameter]
-    high_label = _TEMPERATURE_TREND_LABELS[high_parameter]
+    trend_label = TEMPERATURE_TREND_LABELS[trend_parameter]
+    low_label = TEMPERATURE_TREND_LABELS[low_parameter]
+    high_label = TEMPERATURE_TREND_LABELS[high_parameter]
 
     wide = subset.pivot_table(index=["station_name", "date"], columns="parameter", values="value").reset_index()
     wide = wide.sort_values(["station_name", "date"])
@@ -270,7 +267,9 @@ def _render_chart_grid(
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_series", collapse_composites=True)
+    parameter, subset, effective_parameter, _effective_subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_series", collapse_composites=True
+    )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
 
     if subset.empty:
@@ -281,19 +280,13 @@ def render(ctx: DashboardContext) -> None:
     if parameter == TEMPERATURE_COMPOSITE_KEY:
         band_subset = subset[subset["parameter"].isin(TEMPERATURE_COMPONENT_PARAMETERS)]
 
-        trend_label = st.segmented_control(
-            "Trend line",
-            options=list(_TEMPERATURE_TREND_PARAMETER_BY_LABEL),
-            default="Mean",
-            key="temperature_trend_line",
-        )
-        # segmented_control returns None if the user clicks the selected
-        # option again to deselect it -- fall back to Mean rather than
-        # letting the chart below break.
-        trend_parameter = _TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label or "Mean"]
-
+        # The Mean/Max/Min trend-line toggle itself was already rendered
+        # by render_parameter_and_subset() above (shared across every view
+        # that offers the Temperature composite, not just this one --
+        # see its docstring) -- effective_parameter is exactly which of
+        # the three 2m series it currently has selected.
         _render_featured_chart(
-            _render_temperature_band(band_subset, trend_parameter),
+            _render_temperature_band(band_subset, effective_parameter),
             missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY,
         )
         _render_chart_grid(

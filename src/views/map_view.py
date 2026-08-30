@@ -19,7 +19,9 @@ _CHART_CARD_KEY = "chart-card-parameter_map"
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_map")
+    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+        ctx.raw, key="parameter_map", collapse_composites=True
+    )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
 
     stations_meta = load_stations()
