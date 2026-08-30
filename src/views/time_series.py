@@ -6,6 +6,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.analysis import (
+    HUMIDITY_COMPOSITE_COMPONENTS,
+    HUMIDITY_COMPOSITE_KEY,
     PRECIPITATION_COMPOSITE_KEY,
     PRECIPITATION_FORM_LABELS,
     TEMPERATURE_COMPONENT_PARAMETERS,
@@ -13,6 +15,7 @@ from src.analysis import (
     TEMPERATURE_GROUND_PARAMETER,
     TEMPERATURE_PRIMARY_PARAMETER,
     TEMPERATURE_TREND_LABELS,
+    WIND_COMPOSITE_KEY,
 )
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
@@ -22,12 +25,14 @@ from src.views.common import (
     render_missing_stations_indicator,
     render_missing_stations_notice,
     render_parameter_and_subset,
+    render_stats_toolbar,
 )
 
 _MISSING_ANCHOR = "missing-stations-parameter_series"
 _CHART_CARD_KEY = "chart-card-parameter_series"
 _TEMPERATURE_FEATURED_CARD_KEY = "chart-card-parameter_series-temperature-featured"
 _PRECIPITATION_HEIGHT_CARD_KEY = "chart-card-parameter_series-precipitation-height"
+_WIND_SPEED_CARD_KEY = "chart-card-parameter_series-wind-speed"
 
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
@@ -68,6 +73,19 @@ def _rgba(hex_color: str, alpha: float) -> str:
     hex_color = hex_color.lstrip("#")
     r, g, b = (int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"
+
+
+def _render_line_chart(subset: pd.DataFrame, parameter: str) -> go.Figure:
+    """Plain line chart for one parameter -- used for any non-composite
+    parameter (the default case in render()) and for each component of
+    the Humidity/Pressure Vapor composite."""
+    fig = px.line(
+        subset, x="date", y="value", color="station_name",
+        title=f"{pretty_name(parameter)} over time",
+        labels={"value": pretty_name(parameter), "station_name": "Station"},
+    )
+    fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
+    return fig
 
 
 def _render_temperature_band(subset: pd.DataFrame, trend_parameter: str) -> go.Figure:
@@ -206,6 +224,54 @@ def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _render_snow_depth_chart(subset: pd.DataFrame) -> go.Figure:
+    """Daily snow depth per station, as a plain line chart. Grouped under
+    Precipitation since snow is a direct consequence of precipitation
+    falling in that form -- rendered as its own half-width block below
+    the main cards/charts rather than merged into either, since depth (an
+    accumulated stock) isn't the same kind of quantity as a daily rain
+    amount or a categorical form code."""
+    fig = px.line(
+        subset, x="date", y="value", color="station_name",
+        title="Snow Depth over time",
+        labels={"value": "Snow Depth (cm)", "station_name": "Station"},
+    )
+    fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
+    return fig
+
+
+def _render_wind_speed_chart(subset: pd.DataFrame) -> go.Figure:
+    """Daily mean wind speed per station, as a plain line chart -- gust
+    is kept separate (see _render_wind_gust_chart), since it's an
+    extremely spiky peak-instantaneous reading that doesn't band cleanly
+    against a smoothed daily mean."""
+    speed = subset[subset["parameter"] == "wind_speed"]
+    fig = px.line(
+        speed, x="date", y="value", color="station_name",
+        title="Wind Speed over time",
+        labels={"value": "Wind Speed (m/s)", "station_name": "Station"},
+    )
+    fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
+    return fig
+
+
+def _render_wind_gust_chart(subset: pd.DataFrame) -> go.Figure:
+    """Peak wind gust per calendar month, per station, as a bar chart --
+    zooms out from noisy daily data to one clean monthly worst-gust
+    figure, same idea as _render_monthly_average_chart() for temperature."""
+    gust = subset[subset["parameter"] == "wind_gust_max"].copy()
+    gust["month"] = pd.to_datetime(gust["date"]).dt.to_period("M").dt.to_timestamp()
+    monthly = gust.groupby(["station_name", "month"], as_index=False)["value"].max()
+
+    fig = px.bar(
+        monthly, x="month", y="value", color="station_name", barmode="group",
+        title="Peak Wind Gust by Month",
+        labels={"value": "Max Gust (m/s)", "month": "Month", "station_name": "Station"},
+    )
+    fig.update_xaxes(tickformat="%b %Y", dtick="M1")
+    return fig
+
+
 def _render_featured_chart(
     fig: go.Figure, missing: list[dict[str, str]] | None = None, card_key: str | None = None
 ) -> None:
@@ -266,6 +332,33 @@ def _render_chart_grid(
             is_first = False
 
 
+def _render_half_width_chart(fig: go.Figure, columns: int = _GRID_COLUMNS) -> None:
+    """Render one chart in just the first column of a ``columns``-wide
+    row, leaving the rest empty -- for a chart meant to sit directly
+    under a specific chart above it (Snow Depth positioned below
+    Precipitation over time) rather than stretch full width or get
+    paired with a second chart of its own."""
+    fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
+    row_columns = st.columns(columns)
+    with row_columns[0], chart_card():
+        render_chart(fig)
+
+
+def _render_humidity_composite(subset: pd.DataFrame) -> None:
+    """Humidity and Pressure Vapor: cards then chart, repeated per
+    component (Humidity cards -> Humidity chart -> Pressure Vapor cards
+    -> Pressure Vapor chart), full-width. This is why
+    COMPOSITE_PARAMETER_GROUPS marks this composite with
+    "stats_parameters" instead of a "primary": render_parameter_and_subset()
+    in src/views/common.py deliberately skips auto-rendering stats for
+    it, leaving the ordering entirely up to this function."""
+    for component in HUMIDITY_COMPOSITE_COMPONENTS:
+        component_subset = subset[subset["parameter"] == component]
+        render_stats_toolbar(component_subset, component, key_prefix=f"parameter_series-{component}")
+        with chart_card():
+            render_chart(_render_line_chart(component_subset, component))
+
+
 def render(ctx: DashboardContext) -> None:
     parameter, subset, effective_parameter, _effective_subset = render_parameter_and_subset(
         ctx.raw, key="parameter_series", collapse_composites=True
@@ -297,6 +390,10 @@ def render(ctx: DashboardContext) -> None:
         )
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == PRECIPITATION_COMPOSITE_KEY:
+        # Main precipitation cards (unchanged) come from
+        # render_parameter_and_subset()'s default "primary" handling
+        # above, keyed off precipitation_height as always. Snow Depth
+        # gets its own cards + chart appended below.
         _render_chart_grid(
             [
                 _render_precipitation_height_chart(subset),
@@ -304,15 +401,24 @@ def render(ctx: DashboardContext) -> None:
             ],
             missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY,
         )
+        snow_subset = subset[subset["parameter"] == "snow_depth"]
+        render_stats_toolbar(snow_subset, "snow_depth", key_prefix="parameter_series-snow_depth")
+        _render_half_width_chart(_render_snow_depth_chart(snow_subset))
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+    elif parameter == WIND_COMPOSITE_KEY:
+        _render_chart_grid(
+            [
+                _render_wind_speed_chart(subset),
+                _render_wind_gust_chart(subset),
+            ],
+            missing=missing, icon_card_key=_WIND_SPEED_CARD_KEY,
+        )
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+    elif parameter == HUMIDITY_COMPOSITE_KEY:
+        _render_humidity_composite(subset)
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     else:
-        fig = px.line(
-            subset, x="date", y="value", color="station_name",
-            title=f"{pretty_name(parameter)} over time",
-            labels={"value": pretty_name(parameter), "station_name": "Station"},
-        )
-        fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
         with chart_card(key=_CHART_CARD_KEY):
             render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
-            render_chart(fig)
+            render_chart(_render_line_chart(subset, parameter))
         render_missing_stations_notice(missing, _MISSING_ANCHOR)

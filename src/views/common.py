@@ -18,9 +18,23 @@ from src.ui_theme import ACCENT_HEX_BY_CATEGORY
 
 
 def pretty_name(parameter: str) -> str:
-    """"cloud_cover_total" -> "Cloud Cover Total". Also handles composite
-    keys like "temperature" -> "Temperature" with no special-casing."""
+    """"cloud_cover_total" -> "Cloud Cover Total". Composite keys that
+    don't read cleanly through this generic snake_case split (e.g.
+    "humidity_pressure_vapor") should instead set an explicit "label" in
+    their COMPOSITE_PARAMETER_GROUPS entry -- see _dropdown_label()."""
     return " ".join(word.capitalize() for word in parameter.split("_"))
+
+
+def _dropdown_label(value: str) -> str:
+    """Display text for one "Parameter" dropdown option. Composite keys
+    use their group's explicit "label" when present (see
+    COMPOSITE_PARAMETER_GROUPS in src/analysis.py); everything else
+    (real DWD parameters, and composites without a custom label) falls
+    back to pretty_name()."""
+    group = COMPOSITE_PARAMETER_GROUPS.get(value)
+    if group and "label" in group:
+        return group["label"]
+    return pretty_name(value)
 
 
 def _format_stat(value: float | None, unit: str) -> str:
@@ -55,13 +69,11 @@ def render_stats_toolbar(
     ``subset``/``parameter`` via compute_parameter_stats() -- this is how
     a composite with its own stats function (e.g. compute_temperature_stats
     in src/analysis.py) supplies numbers that don't all come from one
-    series. ``parameter``/``subset`` are still required in that case (for
-    the active-theme accent color and as harmless bookkeeping), just not
-    used to compute the numbers themselves.
+    series.
 
     ``display_label`` overrides the card titles (used when the cards
-    should read a composite's own name, e.g. "Temperature", rather than
-    ``parameter``'s name).
+    should read a composite's own name rather than ``parameter``'s name).
+    Left as ``None``, the cards read ``parameter``'s own pretty name.
     """
     stats = stats if stats is not None else compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
@@ -152,10 +164,18 @@ def render_parameter_and_subset(
     (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py) with one grouped
     dropdown entry. When a composite is selected, ``parameter`` is that
     composite's synthetic key and ``subset`` contains every one of its
-    components' rows; the Key Figures toolbar underneath uses that
-    composite's own ``stats_fn`` if it has one (currently just
-    "Temperature"), otherwise falls back to the default:
-    compute_parameter_stats() on just the composite's "primary" parameter.
+    components' rows; how Key Figures renders underneath depends on which
+    shape the group uses:
+
+      - "stats_fn": one merged 5-card block, via the group's own function
+        (currently just "Temperature", via compute_temperature_stats()).
+      - "stats_parameters": nothing is rendered here -- the caller is
+        expected to call render_stats_toolbar() itself, once per
+        component, since a fixed "cards here" position doesn't fit every
+        composite's presentation (e.g. Humidity and Pressure Vapor wants
+        each component's cards sitting right above its own chart).
+      - neither (just "primary"): the default -- one 5-card block off
+        that single parameter, labeled with the composite's own name.
 
     ``effective_parameter``/``effective_subset`` are what every caller
     that needs to reduce a selection down to *one real DWD parameter* for
@@ -168,14 +188,17 @@ def render_parameter_and_subset(
     _render_temperature_trend_toggle() above) currently has selected --
     that toggle is shared across every view the same way the "Parameter"
     dropdown itself is, so picking "Max" in Regression and switching to
-    Map keeps showing max temperature there too; for "Precipitation",
-    which has no toggle, it's always PRECIPITATION_PRIMARY_PARAMETER
-    (precipitation_height) -- its other component, precipitation_form, is
-    a category code, not a continuous quantity, so there's no meaningful
-    single number to reduce it to outside Time Series' own dedicated
-    monthly-breakdown chart. Only Time Series itself needs the full
-    ``parameter``/``subset`` -- its composite views render every component
-    at once rather than reducing to one.
+    Map keeps showing max temperature there too. Every other composite has
+    no toggle, so it's always that group's "primary" parameter (falling
+    back to its first component for a "stats_parameters"-shaped group like
+    Humidity and Pressure Vapor, which has no single obvious "primary" --
+    see the effective_parameter assignment below) -- e.g. Precipitation's
+    other component, precipitation_form, is a category code, not a
+    continuous quantity, so there's no meaningful single number to reduce
+    it to outside Time Series' own dedicated monthly-breakdown chart. Only
+    Time Series itself needs the full ``parameter``/``subset`` -- its
+    composite views render every component at once rather than reducing
+    to one.
 
     Every view calling this shares one selection: picking "Temperature" in
     Time Series and switching to Map, Regression, or Clustering shows that
@@ -242,7 +265,7 @@ def render_parameter_and_subset(
         options,
         key=key,
         label_visibility="collapsed",
-        format_func=pretty_name,
+        format_func=_dropdown_label,
     )
 
     canonical_parameter = (
@@ -258,23 +281,26 @@ def render_parameter_and_subset(
     if parameter in COMPOSITE_PARAMETER_GROUPS:
         group = COMPOSITE_PARAMETER_GROUPS[parameter]
         subset = raw[raw["parameter"].isin(group["components"])].dropna(subset=["value"])
-        if show_stats:
-            stats_fn = group.get("stats_fn")
-            if stats_fn is not None:
+        if show_stats and "stats_parameters" not in group:
+            if "stats_fn" in group:
                 render_stats_toolbar(
                     subset, group["primary"], key_prefix=key,
-                    display_label=pretty_name(parameter), stats=stats_fn(subset),
+                    display_label=_dropdown_label(parameter), stats=group["stats_fn"](subset),
                 )
             else:
                 stats_subset = raw[raw["parameter"] == group["primary"]].dropna(subset=["value"])
                 render_stats_toolbar(
-                    stats_subset, group["primary"], key_prefix=key, display_label=pretty_name(parameter)
+                    stats_subset, group["primary"], key_prefix=key, display_label=_dropdown_label(parameter)
                 )
         if parameter == TEMPERATURE_COMPOSITE_KEY:
             trend_label = _render_temperature_trend_toggle()
             effective_parameter = TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label]
         else:
-            effective_parameter = group["primary"]
+            # Not every composite has a "primary" -- a "stats_parameters"
+            # group like Humidity and Pressure Vapor has two co-equal
+            # components instead of one designated representative, so
+            # fall back to the first of them.
+            effective_parameter = group.get("primary", group["components"][0])
     else:
         subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
         if show_stats:
