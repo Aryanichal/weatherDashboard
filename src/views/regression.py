@@ -7,6 +7,7 @@ from src.analysis import fit_trend
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
 from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
     missing_station_reason,
     pretty_name,
     render_parameter_and_subset,
@@ -15,7 +16,7 @@ from src.views.common import (
 
 
 def render(ctx: DashboardContext) -> None:
-    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+    _parameter, _subset, parameter, subset, render_key_figures = render_parameter_and_subset(
         ctx.raw, key="parameter_regression", collapse_composites=True
     )
     render_section_label("Station")
@@ -38,7 +39,7 @@ def render(ctx: DashboardContext) -> None:
 
     result = fit_trend(trend_input)
     value_label = pretty_name(parameter)
-    render_section_label(f"Slope: {result['slope_per_day'] * 365:.4f} units/year")
+    render_section_label(f"Slope: {result['slope_per_day'] * 365:.4f} units/year", style="header")
     fig = px.line(
         result["data"], x="date", y=["value", "trend"],
         title=f"{value_label} trend for {station_for_trend}",
@@ -53,5 +54,13 @@ def render(ctx: DashboardContext) -> None:
     )
     fig.for_each_trace(lambda t: t.update(name={"value": value_label, "trend": "Trend"}.get(t.name, t.name)))
     fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
-    with chart_card():
+    # CHART_ROW_WIDTH_RATIO's share of the row, same as every other
+    # chart-bearing tab (Time Series, Map, Clustering) -- see common.py for
+    # where this convention started. Key Figures goes in the remaining
+    # column, right next to the chart.
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0], chart_card():
         render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures()

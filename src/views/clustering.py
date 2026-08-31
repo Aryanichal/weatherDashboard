@@ -7,6 +7,7 @@ from src.analysis import cluster_stations
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
 from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
     find_stations_missing_data,
     pretty_name,
     render_missing_stations_indicator,
@@ -19,7 +20,7 @@ _CHART_CARD_KEY = "chart-card-parameter_clustering"
 
 
 def render(ctx: DashboardContext) -> None:
-    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+    _parameter, _subset, parameter, subset, render_key_figures = render_parameter_and_subset(
         ctx.raw, key="parameter_clustering", collapse_composites=True
     )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
@@ -45,9 +46,18 @@ def render(ctx: DashboardContext) -> None:
         title=f"Stations clustered by mean {value_label}",
         labels={"value": value_label, "station_name": "Station", "cluster": "Cluster"},
     )
-    with chart_card(key=_CHART_CARD_KEY):
+    # CHART_ROW_WIDTH_RATIO's share of the row, same as every other
+    # chart-bearing tab (Time Series, Map, Regression) -- see common.py
+    # for where this convention started. The dataframe table below stays
+    # full-width -- it's not a chart, and a data table benefits from the
+    # extra room rather than being cramped by it.
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0], chart_card(key=_CHART_CARD_KEY):
         render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
         render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures()
     render_missing_stations_notice(missing, _MISSING_ANCHOR)
     with chart_card():
         st.dataframe(

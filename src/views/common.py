@@ -1,6 +1,7 @@
 """Widgets shared across more than one tab view."""
 
 import datetime as dt
+from collections.abc import Callable
 
 import pandas as pd
 import streamlit as st
@@ -14,7 +15,13 @@ from src.analysis import (
 )
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_station_metadata
-from src.ui_theme import ACCENT_HEX_BY_CATEGORY
+from src.ui_theme import ACCENT_HEX_BY_CATEGORY, chart_card
+
+# Every chart-bearing view (Time Series, Map, Regression, Clustering)
+# shares this same chart/Key-Figures row split -- 72% chart, 28% Key
+# Figures box -- so the ratio lives here once rather than being repeated
+# (and drifting) per view.
+CHART_ROW_WIDTH_RATIO = [0.72, 0.28]
 
 
 def pretty_name(parameter: str) -> str:
@@ -47,68 +54,229 @@ def _format_total(value: int | float, unit: str) -> str:
     return f"{value:,.0f} {unit}".strip()
 
 
-def render_section_label(text: str) -> None:
+def render_section_label(text: str, style: str = "label") -> None:
+    """``style="label"`` (default) is for form-field labels above an input
+    ("Location", "Parameter", "Weather stations", ...). ``style="header"``
+    is for an actual section heading introducing a chart/card below it
+    ("Key Figures:", "10-Day Forecast", "Next 48 hours", ...) -- these are
+    two different roles that, now that the top-level nav's own type size
+    grew substantially (see app.py), need visibly different weight rather
+    than the one size both used before.
+
+    Same token the Live Weather hero's city name uses (see
+    _render_current() in src/views/live_weather.py) -- previously this
+    read --m3-primary instead, which desaturates to a visibly lighter
+    grey than --m3-on-primary-container under the "neutral" theme
+    (#8C8C8C vs #444444), so section titles and that text didn't match.
+    """
+    font_size = "20px" if style == "header" else "15px"
+    letter_spacing = "0.1px" if style == "header" else "0.2px"
     st.markdown(
-        f'<p style="font-size:16px;font-weight:600;letter-spacing:0.15px;'
-        f'color:color-mix(in srgb, var(--m3-primary, #4D77CB) 85%, transparent);'
+        f'<p style="font-size:{font_size};font-weight:600;letter-spacing:{letter_spacing};'
+        f'color:var(--m3-on-primary-container, #1E4469);'
         f'margin:0 0 0.5rem 0;">{text}</p>',
         unsafe_allow_html=True,
     )
 
 
-def render_stats_toolbar(
+def render_segmented_nav_css(
+    key: str,
+    option_count: int,
+    font_size: str,
+    margin_top: str = "0",
+    margin_bottom: str = "1.5rem",
+) -> None:
+    """Bare, no-pill skin for one ``st.segmented_control()``: big bold text
+    spanning the full row across ``option_count`` equal columns, a shared
+    sliding underline indicator (one bar that slides between columns, not
+    one per-button), and a lift+color hover affordance on the inactive
+    options. Originally built one-off for the top-level Live Weather/
+    Weather Analysis switch in app.py; pulled out here so the "Weather
+    Analysis" sub-nav (Time Series/Map/Regression/Clustering/Discover
+    Global Warming) can share the exact same look instead of keeping its
+    default pill-button skin the top-level switch moved away from.
+
+    The two buttons in the original version were siblings inside one
+    wrapper <div> (stButtonGroup's own direct children are [label, that
+    div] -- confirmed by inspecting the live DOM), so the sliding
+    indicator lives on *that* div via ::after, not on stButtonGroup or any
+    one button -- one shared bar sliding across on `aria-checked`, not N
+    independent per-button underlines. A faint 1px rail runs the full
+    width under every option (visible under inactive ones too), with the
+    shorter, thicker, colored indicator layered on top of just the active
+    column.
+
+    The indicator keeps the original design's proportions (34% of a 50%
+    column, i.e. 68% of its own column's width, centered) rather than a
+    fixed absolute width, so it scales down sensibly as ``option_count``
+    grows and each column gets narrower -- one rule per column overrides
+    `left` for whichever button currently carries `aria-checked="true"`.
+
+    The scoped selectors below each add one extra ancestor attribute
+    selector versus the global stButtonGroup rules in _BASE_CSS, so they
+    out-specificity those rules (three attribute selectors vs. two)
+    without needing an "!important + later source order" trick -- this
+    one just wins outright.
+    """
+    column_pct = 100 / option_count
+    indicator_width_pct = 0.68 * column_pct
+    offset_pct = (column_pct - indicator_width_pct) / 2
+
+    indicator_position_rules = "".join(
+        f'[class*="{key}"] [data-testid="stButtonGroup"] > div:has(button:nth-child({i})[aria-checked="true"])::after {{ '
+        f"left: {(i - 1) * column_pct + offset_pct:.3f}%; "
+        f"}}"
+        for i in range(1, option_count + 1)
+    )
+
+    st.markdown(
+        f'<style>'
+        f'[class*="{key}"] [data-testid="stButtonGroup"] {{ '
+        f"gap: 0 !important; margin: {margin_top} 0 {margin_bottom} 0; "
+        f"}}"
+        f'[class*="{key}"] [data-testid="stButtonGroup"] > div:has(button) {{ '
+        f"position: relative; "
+        f"border-bottom: 1px solid color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 70%, transparent); "
+        f"}}"
+        f'[class*="{key}"] [data-testid="stButtonGroup"] > div:has(button)::after {{ '
+        f'content: ""; position: absolute; bottom: 0; height: 2px; '
+        f"width: {indicator_width_pct:.3f}%; left: {offset_pct:.3f}%; "
+        f"background: var(--m3-on-primary-container, #1E4469); "
+        f"transition: left 0.28s cubic-bezier(.4, 0, .2, 1); "
+        f"}}"
+        f"{indicator_position_rules}"
+        f'[class*="{key}"] [data-testid="stButtonGroup"] button {{ '
+        f"background: none !important; border: none !important; box-shadow: none !important; "
+        f"backdrop-filter: none !important; -webkit-backdrop-filter: none !important; "
+        f"border-radius: 0 !important; "
+        # The default button rule elsewhere in this file fixes height at
+        # 32px with overflow: hidden (sized for its 1rem font) -- at a
+        # bigger font-size that clips the text top and bottom. Letting the
+        # box size to its own content instead of that fixed height fixes it.
+        f"height: auto !important; min-height: 0 !important; overflow: visible !important; "
+        f"line-height: 1.25 !important; "
+        f"flex: 1 1 {column_pct:.3f}% !important; justify-content: center !important; "
+        f"font-size: {font_size} !important; font-weight: 700 !important; letter-spacing: 0.02em; "
+        f"padding: 0.5rem 0.5rem 0.9rem !important; "
+        f"color: color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 50%, transparent) !important; "
+        f"transition: color 0.15s ease, transform 0.15s ease; "
+        f"}}"
+        # Hover affordance on the unselected options only -- a small lift
+        # plus their full active-state color, so they visibly invite a
+        # click without touching the already-active option (which doesn't
+        # need one).
+        f'[class*="{key}"] [data-testid="stButtonGroup"] button:not([aria-checked="true"]):hover {{ '
+        f"color: var(--m3-on-primary-container, #1E4469) !important; "
+        f"transform: translateY(-3px); "
+        f"}}"
+        # The button's text sits inside a [data-testid="stMarkdownContainer"]
+        # > <p> that carries its own fixed 14px rule elsewhere -- the
+        # existing "font-size: inherit" trick on button-p (see _BASE_CSS)
+        # inherits from that div, not from the button several levels up, so
+        # it never picks up the size above without this.
+        f'[class*="{key}"] [data-testid="stButtonGroup"] button p {{ '
+        f"font-size: {font_size} !important; font-weight: 700 !important; line-height: 1.25 !important; "
+        f"}}"
+        f'[class*="{key}"] [data-testid="stButtonGroup"] button[aria-checked="true"] {{ '
+        f"color: var(--m3-on-primary-container, #1E4469) !important; "
+        f"}}"
+        f"</style>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_key_figures_box(
     subset: pd.DataFrame,
     parameter: str,
     key_prefix: str,
-    display_label: str | None = None,
     stats: dict[str, float | int | str | None] | None = None,
+    chart_height: int = 450,
 ) -> None:
-    """Min/mean/max/mode/total cards for one parameter's filtered data.
+    """Min/mean/max/mode/total for one parameter's filtered data, combined
+    into a single vertically-stacked box (one bordered card, one row per
+    stat) rather than five separate metric cards spanning the full row --
+    sized to sit in the narrow leftover column next to its own chart (see
+    CHART_ROW_WIDTH_RATIO above, and the ``render_key_figures`` callable
+    render_parameter_and_subset() returns below) instead of stretching
+    full-width above it.
+
+    ``chart_height`` should be whatever pixel height the chart sitting
+    next to this box was given (``fig.update_layout(height=...)``; 450 is
+    Plotly's own default when a caller never sets one, e.g. Map/
+    Regression/Clustering's charts) -- this box's own CSS height is set to
+    match it (plus chart_card()'s own padding/border) directly, in
+    pixels, rather than via a `height: 100%` percentage chain. The
+    percentage approach doesn't work here: a percentage height only
+    resolves against a parent with a *definite* (non-auto) height, and
+    Streamlit's own bordered-container wrapper is itself auto-sized to
+    its content, so `height: 100%` on it (or on anything inside it)
+    silently collapses back to "auto" per the CSS spec, regardless of how
+    tall the column around it has stretched. An explicit pixel height
+    sidesteps that chain entirely.
 
     ``stats``, when provided, is used as-is instead of being computed from
     ``subset``/``parameter`` via compute_parameter_stats() -- this is how
     a composite with its own stats function (e.g. compute_temperature_stats
     in src/analysis.py) supplies numbers that don't all come from one
-    series.
-
-    ``display_label`` overrides the card titles (used when the cards
-    should read a composite's own name rather than ``parameter``'s name).
-    Left as ``None``, the cards read ``parameter``'s own pretty name.
+    series. Unlike the old five-card layout, each row's label no longer
+    needs to repeat the parameter's own name (there's already one "Key
+    Figures:" header above the whole box), so this no longer takes a
+    ``display_label`` override either -- ``parameter`` only ever affects
+    the accent color lookup now.
     """
     stats = stats if stats is not None else compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
-    label = display_label or pretty_name(parameter)
     active_parameter = st.session_state.get("active_theme_parameter", parameter)
     accent_hex = ACCENT_HEX_BY_CATEGORY[categorize_parameter(active_parameter)]
 
     stat_defs = [
-        ("min", f"Min {label}", _format_stat(stats["min"], unit), True),
-        ("mean", f"Mean {label}", _format_stat(stats["mean"], unit), False),
-        ("max", f"Max {label}", _format_stat(stats["max"], unit), True),
-        ("mode", f"Mode {label}", _format_stat(stats["mode"], unit), False),
-        ("total", stats["total_label"], _format_total(stats["total"], stats["total_unit"]), True),
+        ("Min", _format_stat(stats["min"], unit)),
+        ("Mean", _format_stat(stats["mean"], unit)),
+        ("Max", _format_stat(stats["max"], unit)),
+        ("Mode", _format_stat(stats["mode"], unit)),
+        (stats["total_label"], _format_total(stats["total"], stats["total_unit"])),
     ]
 
-    render_section_label("Key Figures:")
+    render_section_label("Key Figures:", style="header")
 
+    card_key = f"{key_prefix}-key-figures"
+    # No per-row background (an alternating accent tint was tried and
+    # then explicitly reverted) -- every row reads the same: a muted
+    # default-ink label, an accent-colored bold value, both directly on
+    # the card's own plain background.
+    rows = "".join(
+        f'<div style="display:flex; justify-content:space-between; align-items:center; '
+        f'gap:0.75rem; padding:0.7rem 0.15rem;'
+        f'{"" if i == len(stat_defs) - 1 else "border-bottom:1px solid color-mix(in srgb, var(--m3-outline-variant, #B7C6D7) 45%, transparent);"}">'
+        f'<span style="font-size:0.85rem; font-weight:600; text-transform:uppercase; '
+        f'letter-spacing:0.04em; opacity:0.65; white-space:nowrap;">{stat_label}</span>'
+        f'<span style="font-size:1.3rem; font-weight:700; white-space:nowrap; '
+        f'color:{accent_hex};">{value}</span>'
+        f'</div>'
+        for i, (stat_label, value) in enumerate(stat_defs)
+    )
+    # An explicit pixel height, matched to the chart sitting next to this
+    # box (chart_height + chart_card()'s own ~24px top/bottom padding +
+    # ~1px border each side, see _BASE_CSS in src/ui_theme.py) -- not
+    # `height: 100%`. A percentage height only resolves against a parent
+    # with a *definite* (non-auto) height, and Streamlit's own bordered-
+    # container wrapper is itself auto-sized to its content, so
+    # `height: 100%` here silently collapses back to "auto" per the CSS
+    # spec regardless of how tall the column around it has stretched --
+    # this sidesteps that chain entirely by not depending on it.
+    box_height = chart_height + 2 * 25
     st.markdown(
-        f'<style>'
-        f'[class*="{key_prefix}-"][class*="-stat-accent"] {{'
-        f'background: color-mix(in srgb, {accent_hex} 80%, white) !important;'
-        f'}}'
-        f'[class*="{key_prefix}-"][class*="-stat-plain"] [data-testid="stMetricLabel"] p,'
-        f'[class*="{key_prefix}-"][class*="-stat-plain"] [data-testid="stMetricValue"] {{'
-        f'color: color-mix(in srgb, {accent_hex} 85%, transparent) !important;'
-        f'}}'
-        f'</style>',
+        f'<style>div[data-testid="stVerticalBlock"][class*="{card_key}"] {{ '
+        f"height: {box_height}px !important; padding: 0.85rem 1rem !important; "
+        f"}}</style>",
         unsafe_allow_html=True,
     )
-
-    cols = st.columns(5)
-    for col, (slug, title, value, accent) in zip(cols, stat_defs):
-        marker = "stat-accent" if accent else "stat-plain"
-        with col, st.container(border=True, key=f"{key_prefix}-{slug}-{marker}"):
-            st.metric(title, value)
+    with chart_card(key=card_key):
+        st.markdown(
+            f'<div style="height:100%; display:flex; flex-direction:column; justify-content:space-between;">'
+            f'{rows}</div>',
+            unsafe_allow_html=True,
+        )
 
 
 _SHARED_PARAMETER_KEY = "shared_selected_parameter"
@@ -156,26 +324,42 @@ def _render_temperature_trend_toggle() -> str:
 
 def render_parameter_and_subset(
     raw: pd.DataFrame, key: str, show_stats: bool = True, collapse_composites: bool = False
-) -> tuple[str, pd.DataFrame, str, pd.DataFrame]:
+) -> tuple[str, pd.DataFrame, str, pd.DataFrame, Callable[..., None] | None]:
     """Render a "Parameter" selectbox scoped to one view and filter ``raw`` to it.
-    Returns ``(parameter, subset, effective_parameter, effective_subset)``.
+    Returns ``(parameter, subset, effective_parameter, effective_subset, render_key_figures)``.
+
+    ``render_key_figures`` is a callable taking one optional ``chart_height``
+    argument (or ``None`` if ``show_stats=False``, or the composite is
+    "stats_parameters"-shaped -- see below) that renders the combined Key
+    Figures box (see render_key_figures_box()) when called -- it is *not*
+    rendered here. Callers are expected to call it themselves inside
+    whichever column should hold it, typically the narrow leftover column
+    next to this view's own chart (``chart_col, stats_col = st.columns(CHART_ROW_WIDTH_RATIO)``,
+    then ``with stats_col: render_key_figures(chart_height)`` once the chart
+    itself is known) rather than a full-width block above the chart --
+    this used to render inline, full-width, right here, before Key
+    Figures moved next to its chart instead of above it. Pass the same
+    pixel height the paired chart was given
+    (``fig.update_layout(height=...)``) so the box matches it -- see
+    render_key_figures_box()'s own docstring for why that's a plain
+    argument instead of something this function could work out on its own.
 
     ``collapse_composites`` replaces each group's component parameters
     (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py) with one grouped
     dropdown entry. When a composite is selected, ``parameter`` is that
     composite's synthetic key and ``subset`` contains every one of its
-    components' rows; how Key Figures renders underneath depends on which
-    shape the group uses:
+    components' rows; what ``render_key_figures`` is set to depends on
+    which shape the group uses:
 
-      - "stats_fn": one merged 5-card block, via the group's own function
+      - "stats_fn": one merged box, via the group's own function
         (currently just "Temperature", via compute_temperature_stats()).
-      - "stats_parameters": nothing is rendered here -- the caller is
-        expected to call render_stats_toolbar() itself, once per
-        component, since a fixed "cards here" position doesn't fit every
-        composite's presentation (e.g. Humidity and Pressure Vapor wants
-        each component's cards sitting right above its own chart).
-      - neither (just "primary"): the default -- one 5-card block off
-        that single parameter, labeled with the composite's own name.
+      - "stats_parameters": left ``None`` -- the caller is expected to call
+        render_key_figures_box() itself, once per component, since a
+        fixed single box doesn't fit every composite's presentation (e.g.
+        Humidity and Pressure Vapor wants each component's own box sitting
+        next to its own chart, not one merged box for both).
+      - neither (just "primary"): the default -- one box off that single
+        parameter, labeled with the composite's own name.
 
     ``effective_parameter``/``effective_subset`` are what every caller
     that needs to reduce a selection down to *one real DWD parameter* for
@@ -275,24 +459,31 @@ def render_parameter_and_subset(
         canonical_parameter = parameter
     st.session_state[_SHARED_PARAMETER_KEY] = canonical_parameter
 
-    prev_value_key = f"_theme_prev_{key}"
-    if st.session_state.get(prev_value_key) != parameter:
-        st.session_state["active_theme_parameter"] = parameter
-    st.session_state[prev_value_key] = parameter
+    # Unconditional, not "only when parameter changed since this view's own
+    # last render": app.py only ever runs one view's render() per script
+    # pass (see its module docstring), so a change-only update left this
+    # stale whenever a *different* view ran in between and overwrote
+    # "active_theme_parameter" itself (Live Weather does this every render,
+    # via its own current conditions -- see live_weather.py) -- switching
+    # back to this view without touching its dropdown then kept whatever
+    # theme that other view last set, instead of reasserting this view's
+    # own current parameter's theme.
+    st.session_state["active_theme_parameter"] = parameter
 
+    render_key_figures = None
     if parameter in COMPOSITE_PARAMETER_GROUPS:
         group = COMPOSITE_PARAMETER_GROUPS[parameter]
         subset = raw[raw["parameter"].isin(group["components"])].dropna(subset=["value"])
         if show_stats and "stats_parameters" not in group:
             if "stats_fn" in group:
-                render_stats_toolbar(
-                    subset, group["primary"], key_prefix=key,
-                    display_label=_dropdown_label(parameter), stats=group["stats_fn"](subset),
+                stats = group["stats_fn"](subset)
+                render_key_figures = lambda chart_height=450: render_key_figures_box(
+                    subset, group["primary"], key_prefix=key, stats=stats, chart_height=chart_height
                 )
             else:
                 stats_subset = raw[raw["parameter"] == group["primary"]].dropna(subset=["value"])
-                render_stats_toolbar(
-                    stats_subset, group["primary"], key_prefix=key, display_label=_dropdown_label(parameter)
+                render_key_figures = lambda chart_height=450: render_key_figures_box(
+                    stats_subset, group["primary"], key_prefix=key, chart_height=chart_height
                 )
         if parameter == TEMPERATURE_COMPOSITE_KEY:
             trend_label = _render_temperature_trend_toggle()
@@ -306,11 +497,13 @@ def render_parameter_and_subset(
     else:
         subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
         if show_stats:
-            render_stats_toolbar(subset, parameter, key_prefix=key)
+            render_key_figures = lambda chart_height=450: render_key_figures_box(
+                subset, parameter, key_prefix=key, chart_height=chart_height
+            )
         effective_parameter = parameter
 
     effective_subset = raw[raw["parameter"] == effective_parameter].dropna(subset=["value"])
-    return parameter, subset, effective_parameter, effective_subset
+    return parameter, subset, effective_parameter, effective_subset, render_key_figures
 
 
 def _station_missing_reason(
@@ -428,7 +621,7 @@ def render_missing_stations_indicator(
     without this the icon would position against the page instead of the
     card). st.container's own `key=` becomes an "st-key-{key}" class on its
     wrapper div; [class*=...] substring-matches that regardless of the
-    exact prefix, same trick render_stats_toolbar() uses.
+    exact prefix, same trick render_key_figures_box() uses.
 
     ``top``/``right`` default to the Time Series legend title's measured
     position (via getBoundingClientRect() against its chart_card, at
