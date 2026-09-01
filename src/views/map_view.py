@@ -7,6 +7,7 @@ from src.dashboard_context import DashboardContext
 from src.data_loader import load_stations
 from src.ui_theme import chart_card, render_chart
 from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
     find_stations_missing_data,
     pretty_name,
     render_missing_stations_indicator,
@@ -19,7 +20,7 @@ _CHART_CARD_KEY = "chart-card-parameter_map"
 
 
 def render(ctx: DashboardContext) -> None:
-    _parameter, _subset, parameter, subset = render_parameter_and_subset(
+    _parameter, _subset, parameter, subset, render_key_figures = render_parameter_and_subset(
         ctx.raw, key="parameter_map", collapse_composites=True
     )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
@@ -43,7 +44,15 @@ def render(ctx: DashboardContext) -> None:
         title=f"Mean {pretty_name(parameter)} by station",
         labels={"value": pretty_name(parameter)},
     )
-    with chart_card(key=_CHART_CARD_KEY):
+    # CHART_ROW_WIDTH_RATIO's share of the row, same as every other
+    # chart-bearing tab (Time Series, Regression, Clustering) -- see
+    # common.py for where this convention started. Key Figures goes in
+    # the remaining column, right next to the map.
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0], chart_card(key=_CHART_CARD_KEY):
         render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
         render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures()
     render_missing_stations_notice(missing, _MISSING_ANCHOR)

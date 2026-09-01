@@ -1,5 +1,7 @@
 """Time Series tab: raw parameter values over time, per selected station."""
 
+from collections.abc import Callable
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -20,12 +22,13 @@ from src.analysis import (
 from src.dashboard_context import DashboardContext
 from src.ui_theme import chart_card, render_chart
 from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
     find_stations_missing_data,
     pretty_name,
+    render_key_figures_box,
     render_missing_stations_indicator,
     render_missing_stations_notice,
     render_parameter_and_subset,
-    render_stats_toolbar,
 )
 
 _MISSING_ANCHOR = "missing-stations-parameter_series"
@@ -36,7 +39,10 @@ _WIND_SPEED_CARD_KEY = "chart-card-parameter_series-wind-speed"
 
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
-_GRID_COLUMNS = 2
+# Each chart gets its own row now, at CHART_ROW_WIDTH_RATIO's share of the
+# row's width (the remaining column is left empty, or holds a Key Figures
+# box) -- charts that used to sit two to a row (see _render_chart_grid())
+# now stack one per row instead.
 _FEATURED_CHART_HEIGHT = 480
 
 # Missing-station icon offsets (see render_missing_stations_indicator() in
@@ -273,10 +279,18 @@ def _render_wind_gust_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_featured_chart(
-    fig: go.Figure, missing: list[dict[str, str]] | None = None, card_key: str | None = None
+    fig: go.Figure,
+    missing: list[dict[str, str]] | None = None,
+    card_key: str | None = None,
+    render_key_figures: Callable[..., None] | None = None,
 ) -> None:
-    """Render one chart full-width at the taller "featured" height, above
-    whatever grid of smaller charts follows it.
+    """Render one chart at CHART_ROW_WIDTH_RATIO's share of its row's
+    width, at the taller "featured" height, above whatever grid of smaller
+    charts follows it. ``render_key_figures``, when given, renders that
+    composite's Key Figures box (see render_parameter_and_subset() in
+    common.py) into the row's remaining column, right next to this chart
+    -- passed _FEATURED_CHART_HEIGHT so the box's own height matches this
+    chart's.
 
     ``missing``/``card_key``, when given, overlay the missing-station
     warning icon (see render_missing_stations_indicator() in common.py)
@@ -288,23 +302,29 @@ def _render_featured_chart(
     at the legend's own vertical position and that moves with chart
     height (see render_missing_stations_indicator()'s docstring)."""
     fig.update_layout(height=_FEATURED_CHART_HEIGHT)
-    with chart_card(key=card_key):
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0], chart_card(key=card_key):
         if missing and card_key:
             render_missing_stations_indicator(
                 missing, _MISSING_ANCHOR, card_key=card_key, top=_FEATURED_ICON_TOP, right=_FEATURED_ICON_RIGHT
             )
         render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures(_FEATURED_CHART_HEIGHT)
 
 
 def _render_chart_grid(
     figs: list[go.Figure],
-    columns: int = _GRID_COLUMNS,
     missing: list[dict[str, str]] | None = None,
     icon_card_key: str | None = None,
+    render_key_figures: Callable[..., None] | None = None,
 ) -> None:
-    """Lay out ``figs`` in a fixed-column grid instead of stacking each one
-    full-width, so a typical desktop viewport shows multiple charts at
-    once without scrolling.
+    """Lay out ``figs`` one per row, each sized to CHART_ROW_WIDTH_RATIO's
+    share of the row (the remaining column is left empty, or holds a Key
+    Figures box) instead of pairing two to a row -- a chart that used to
+    sit side by side with another now gets pushed to its own row below it
+    instead.
 
     ``missing``/``icon_card_key``, when given, overlay the missing-station
     warning icon (see render_missing_stations_indicator() in common.py) on
@@ -314,53 +334,67 @@ def _render_chart_grid(
     component (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py), so it's
     the one most representative of the parameter as a whole. ``icon_card_key``
     must be unique app-wide (it becomes that one chart_card()'s own key);
-    every other card in the grid stays unkeyed, as before."""
+    every other card in the grid stays unkeyed, as before.
+
+    ``render_key_figures``, when given, renders that composite's Key
+    Figures box (see render_parameter_and_subset() in common.py) into the
+    *first* chart's row, same reasoning as ``icon_card_key`` -- every
+    later chart's remaining column stays empty."""
     for fig in figs:
         fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
     is_first = True
-    for start in range(0, len(figs), columns):
-        row_figs = figs[start : start + columns]
-        row_columns = st.columns(len(row_figs))
-        for col, fig in zip(row_columns, row_figs):
-            card_key = icon_card_key if is_first else None
-            with col, chart_card(key=card_key):
-                if is_first and missing and icon_card_key:
-                    render_missing_stations_indicator(
-                        missing, _MISSING_ANCHOR, card_key=icon_card_key, top=_GRID_ICON_TOP, right=_GRID_ICON_RIGHT
-                    )
-                render_chart(fig)
-            is_first = False
+    for fig in figs:
+        row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+        card_key = icon_card_key if is_first else None
+        with row_columns[0], chart_card(key=card_key):
+            if is_first and missing and icon_card_key:
+                render_missing_stations_indicator(
+                    missing, _MISSING_ANCHOR, card_key=icon_card_key, top=_GRID_ICON_TOP, right=_GRID_ICON_RIGHT
+                )
+            render_chart(fig)
+        if is_first and render_key_figures:
+            with row_columns[1]:
+                render_key_figures(_GRID_CHART_HEIGHT)
+        is_first = False
 
 
-def _render_half_width_chart(fig: go.Figure, columns: int = _GRID_COLUMNS) -> None:
-    """Render one chart in just the first column of a ``columns``-wide
-    row, leaving the rest empty -- for a chart meant to sit directly
-    under a specific chart above it (Snow Depth positioned below
-    Precipitation over time) rather than stretch full width or get
-    paired with a second chart of its own."""
+def _render_chart_row(fig: go.Figure, render_key_figures: Callable[..., None] | None = None) -> None:
+    """Render one chart at CHART_ROW_WIDTH_RATIO's share of its row's
+    width (same as _render_chart_grid()) -- for a chart meant to sit
+    directly under a specific chart above it (Snow Depth positioned below
+    Precipitation over time) rather than stretch full width.
+    ``render_key_figures``, when given, renders that chart's own Key
+    Figures box (see render_parameter_and_subset() in common.py) into the
+    row's remaining column; left empty otherwise."""
     fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
-    row_columns = st.columns(columns)
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0], chart_card():
         render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures(_GRID_CHART_HEIGHT)
 
 
 def _render_humidity_composite(subset: pd.DataFrame) -> None:
-    """Humidity and Pressure Vapor: cards then chart, repeated per
-    component (Humidity cards -> Humidity chart -> Pressure Vapor cards
-    -> Pressure Vapor chart), full-width. This is why
-    COMPOSITE_PARAMETER_GROUPS marks this composite with
-    "stats_parameters" instead of a "primary": render_parameter_and_subset()
-    in src/views/common.py deliberately skips auto-rendering stats for
-    it, leaving the ordering entirely up to this function."""
+    """Humidity and Pressure Vapor: each component's own chart, with its
+    own Key Figures box beside it in the row's remaining column (see
+    CHART_ROW_WIDTH_RATIO) -- Humidity's chart+box, then Pressure Vapor's
+    own chart+box below. This is why COMPOSITE_PARAMETER_GROUPS marks this
+    composite with "stats_parameters" instead of a "primary":
+    render_parameter_and_subset() in src/views/common.py deliberately
+    leaves ``render_key_figures`` as ``None`` for it, leaving both the
+    ordering and the per-component box entirely up to this function."""
     for component in HUMIDITY_COMPOSITE_COMPONENTS:
         component_subset = subset[subset["parameter"] == component]
-        render_stats_toolbar(component_subset, component, key_prefix=f"parameter_series-{component}")
-        with chart_card():
+        row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+        with row_columns[0], chart_card():
             render_chart(_render_line_chart(component_subset, component))
+        with row_columns[1]:
+            render_key_figures_box(component_subset, component, key_prefix=f"parameter_series-{component}")
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset, effective_parameter, _effective_subset = render_parameter_and_subset(
+    parameter, subset, effective_parameter, _effective_subset, render_key_figures = render_parameter_and_subset(
         ctx.raw, key="parameter_series", collapse_composites=True
     )
     missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
@@ -377,10 +411,13 @@ def render(ctx: DashboardContext) -> None:
         # by render_parameter_and_subset() above (shared across every view
         # that offers the Temperature composite, not just this one --
         # see its docstring) -- effective_parameter is exactly which of
-        # the three 2m series it currently has selected.
+        # the three 2m series it currently has selected. Key Figures (one
+        # merged box for the whole composite, via "stats_fn" -- see
+        # COMPOSITE_PARAMETER_GROUPS in src/analysis.py) sits next to this
+        # featured chart; the grid charts below it don't get their own.
         _render_featured_chart(
             _render_temperature_band(band_subset, effective_parameter),
-            missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY,
+            missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY, render_key_figures=render_key_figures,
         )
         _render_chart_grid(
             [
@@ -390,20 +427,25 @@ def render(ctx: DashboardContext) -> None:
         )
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == PRECIPITATION_COMPOSITE_KEY:
-        # Main precipitation cards (unchanged) come from
+        # Main precipitation Key Figures (unchanged) comes from
         # render_parameter_and_subset()'s default "primary" handling
-        # above, keyed off precipitation_height as always. Snow Depth
-        # gets its own cards + chart appended below.
+        # above, keyed off precipitation_height as always -- rendered next
+        # to its own chart (the first one below). Snow Depth gets its own
+        # box next to its own chart, appended below.
         _render_chart_grid(
             [
                 _render_precipitation_height_chart(subset),
                 _render_precipitation_form_chart(subset),
             ],
-            missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY,
+            missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY, render_key_figures=render_key_figures,
         )
         snow_subset = subset[subset["parameter"] == "snow_depth"]
-        render_stats_toolbar(snow_subset, "snow_depth", key_prefix="parameter_series-snow_depth")
-        _render_half_width_chart(_render_snow_depth_chart(snow_subset))
+        _render_chart_row(
+            _render_snow_depth_chart(snow_subset),
+            render_key_figures=lambda chart_height=_GRID_CHART_HEIGHT: render_key_figures_box(
+                snow_subset, "snow_depth", key_prefix="parameter_series-snow_depth", chart_height=chart_height
+            ),
+        )
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == WIND_COMPOSITE_KEY:
         _render_chart_grid(
@@ -411,14 +453,18 @@ def render(ctx: DashboardContext) -> None:
                 _render_wind_speed_chart(subset),
                 _render_wind_gust_chart(subset),
             ],
-            missing=missing, icon_card_key=_WIND_SPEED_CARD_KEY,
+            missing=missing, icon_card_key=_WIND_SPEED_CARD_KEY, render_key_figures=render_key_figures,
         )
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     elif parameter == HUMIDITY_COMPOSITE_KEY:
         _render_humidity_composite(subset)
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
     else:
-        with chart_card(key=_CHART_CARD_KEY):
+        row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+        with row_columns[0], chart_card(key=_CHART_CARD_KEY):
             render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
             render_chart(_render_line_chart(subset, parameter))
+        if render_key_figures:
+            with row_columns[1]:
+                render_key_figures()
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
