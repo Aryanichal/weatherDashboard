@@ -32,6 +32,7 @@ from src.forecasting import (
     HOT_DAYS_INDICATOR,
     JULY_TEMPERATURE_INDICATOR,
     PYTORCH_MODEL_NAME,
+    RAINY_DAYS_INDICATOR,
     load_forecasts,
 )
 
@@ -88,6 +89,9 @@ def _render_future_forecast(
     city_history = history.loc[(history["city"] == city) & (history["indicator"] == indicator)]
     city_forecasts = forecasts.loc[(forecasts["city"] == city) & (forecasts["indicator"] == indicator)]
     city_metrics = metrics.loc[(metrics["city"] == city) & (metrics["indicator"] == indicator)].copy()
+    if city_history.empty or city_forecasts.empty or city_metrics.empty:
+        st.info(f"No forecast data is currently available for {indicator.lower()} in {city}.")
+        return
     forecast_fig = px.line(
         city_history,
         x="year",
@@ -334,7 +338,7 @@ def _render_trend_tab(ctx: DashboardContext) -> None:
 
 def _render_prediction_tab() -> None:
     st.caption(
-        "Both models forecast annual hot-day counts and average July temperatures, rather than the weather in a specific year. "
+        "The models forecast annual hot-day counts, average July temperatures, and rainy-day counts rather than the weather in a specific year. "
         "The partial current year is excluded from model fitting."
     )
     try:
@@ -356,4 +360,9 @@ def _render_prediction_tab() -> None:
     _render_future_forecast(
         forecast_city, JULY_TEMPERATURE_INDICATOR, "Average July temperature (°C)",
         f"{forecast_city}: Average July Temperature Forecast", forecasts, forecast_metrics, forecast_history,
+    )
+    st.subheader("Rainy Days Future Prediction")
+    _render_future_forecast(
+        forecast_city, RAINY_DAYS_INDICATOR, "Rainy days above 1 mm",
+        f"{forecast_city}: Rainy Days Above 1 mm Forecast", forecasts, forecast_metrics, forecast_history,
     )
