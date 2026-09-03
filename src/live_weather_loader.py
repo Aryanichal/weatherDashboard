@@ -1,17 +1,8 @@
 """Fetch live/near-term forecast weather data from DWD's MOSMIX product.
 
-Uses the `wetterdienst` library's DwdMosmixRequest, which wraps DWD's MOSMIX
-(Model Output Statistics) forecast -- a genuinely different DWD product from
-the daily climate_summary observations the rest of this dashboard uses (see
-src/data_loader.py): MOSMIX is numerical-model output re-issued ~4x/day,
-covering roughly the next 10 days at hourly resolution, and it uses its own
-station catalog (WMO-style 5-digit ids, e.g. "10865" for Muenchen-Stadt) --
-NOT the DWD climate-observation station ids used elsewhere in this app (e.g.
-"01048"), so a station selection made in the other tabs doesn't carry over
-here. No API key is required, same as the rest of the app's DWD access.
-
-Reference: DWD's MOSMIX documentation --
-https://www.dwd.de/DE/leistungen/opendata/help/modelle/mosmix_erlaeuterung_de.pdf
+MOSMIX uses its own station id catalog, distinct from the climate-observation
+station ids used elsewhere in this app, so a station picked in other tabs
+doesn't carry over here.
 """
 
 import math
@@ -24,19 +15,9 @@ from src.data_loader import SETTINGS
 
 LOCAL_TIMEZONE = "Europe/Berlin"
 
-# Curated MOSMIX station ids for Germany's ~40 largest cities by
-# population. MOSMIX's own station catalog has ~5,600 entries (airports,
-# small automatic stations, several near-duplicates per city, ...), so
-# picking straight from the full list isn't practical for a simple
-# dropdown -- these were looked up by name from
-# DwdMosmixRequest(...).all().df, picked as each city's main/best-known
-# station, and each verified individually to actually return every one of
-# PARAMETERS (a handful of MOSMIX stations only carry a subset). Most ids
-# are 5-digit numeric (DWD's main synoptic-station catalog, the same
-# family the original 12 cities' ids came from); a few larger cities
-# (Duisburg, Bochum, Wuppertal, Gelsenkirchen, Krefeld, Oberhausen,
-# Rostock, Muenster, Mainz) only have a smaller alphanumeric-id automatic
-# station nearby -- confirmed to carry the full parameter set too.
+# Curated MOSMIX station ids for Germany's ~40 largest cities. Each is
+# verified to return every parameter in PARAMETERS; a few cities only have
+# a smaller alphanumeric-id automatic station nearby.
 CITY_STATIONS = {
     "Berlin": "10384",  # Berlin-Tempelhof
     "Hamburg": "10147",  # Hamburg-Fuhlsbuettel
@@ -80,11 +61,7 @@ CITY_STATIONS = {
     "Kassel": "10438",
 }
 
-# (latitude, longitude) per curated city, for the small "where is this on
-# the map" widget on the Live Weather view -- read off the same MOSMIX
-# station list CITY_STATIONS' ids were picked from, not re-derived from
-# CITY_STATIONS itself, since a station's coordinates aren't otherwise
-# available without a network call.
+# (latitude, longitude) per curated city, for the "where is this" map widget.
 CITY_COORDINATES = {
     "Berlin": (52.47, 13.40),
     "Hamburg": (53.63, 10.00),
@@ -128,10 +105,7 @@ CITY_COORDINATES = {
     "Kassel": (51.30, 9.45),
 }
 
-# The subset of MOSMIX's ~120 available parameters this view actually
-# shows -- a normal weather-app front page, not another analysis tab, so
-# this is deliberately narrow. See DwdMosmixMetadata's "large" dataset
-# (MOSMIX_L) for the full parameter list.
+# The subset of MOSMIX's ~120 available parameters this view shows.
 PARAMETERS = [
     "temperature_air_mean_2m",
     "temperature_dew_point_mean_2m",
@@ -154,22 +128,9 @@ UNITS = {
     "cloud_cover_total": "%",
 }
 
-# weather_significant is DWD's forecast rendering of the WMO "present
-# weather" code table (WMO code table 4677/4680) -- 0-3 are cloud-cover-only
-# categories (no precipitation), then increasing code ranges for fog,
-# drizzle, rain, snow, showers, and thunderstorms. DWD's forecast only ever
-# emits a subset of the full 0-99 table (codes describing *past* weather
-# evolution, e.g. "clouds dissolving", don't apply to a forecast), so this
-# buckets by range rather than listing every individual code.
-#
-# The 5th column is a real DWD parameter name whose existing color category
-# (see PARAMETER_COLOR_CATEGORY in src/analysis.py) matches that bucket's
-# weather -- clear reuses "temperature"'s warm gold, cloudy/foggy reuses
-# "neutral"'s grey, anything wet reuses "precipitation"'s blue. Passing one
-# of these through st.session_state["active_theme_parameter"] is how this
-# view re-themes the whole page (background, nav row, ...) via the same
-# apply_dynamic_theme() mechanism every other tab's "Parameter" dropdown
-# already drives, rather than adding a second theming path.
+
+# The 5th column is a DWD parameter name used to re-theme the page (via
+# apply_dynamic_theme()/active_theme_parameter) to match that weather bucket.
 _TEMPERATURE_THEME_PARAMETER = "temperature_air_mean_2m"
 _NEUTRAL_THEME_PARAMETER = "cloud_cover_total"
 _PRECIPITATION_THEME_PARAMETER = "precipitation_height"
@@ -192,18 +153,11 @@ _WEATHER_CODE_ICONS: list[tuple[int, int, str, str, str]] = [
 
 
 class LiveWeatherFetchError(Exception):
-    """Raised when DWD's MOSMIX forecast can't be fetched or parsed.
-    Callers (the Live Weather view) should catch this and show a
-    plain-language message instead of letting wetterdienst's/an XML
-    parser's traceback surface -- mirrors WeatherDataFetchError in
-    src/data_loader.py."""
+    """Raised when DWD's MOSMIX forecast can't be fetched or parsed."""
 
 
 def weather_icon_label_and_theme(code: float | None) -> tuple[str, str, str]:
-    """(emoji, description, theme_parameter) for one weather_significant
-    code -- see _WEATHER_CODE_ICONS above for the source table.
-    ``theme_parameter`` is a real DWD parameter name to feed into
-    apply_dynamic_theme()/st.session_state["active_theme_parameter"]."""
+    """(emoji, description, theme_parameter) for one weather_significant code."""
     if code is None or pd.isna(code):
         return "❓", "Unknown", _NEUTRAL_THEME_PARAMETER
     code_int = int(round(code))
@@ -215,9 +169,7 @@ def weather_icon_label_and_theme(code: float | None) -> tuple[str, str, str]:
 
 def relative_humidity_percent(temperature_c: float | None, dewpoint_c: float | None) -> float | None:
     """Relative humidity (%) via the Magnus formula -- MOSMIX reports dew
-    point rather than relative humidity directly. a/b are the Alduchov &
-    Eskridge (1996) Magnus-formula coefficients (a=17.625, b=243.04 degC),
-    a standard, widely-cited approximation for this conversion."""
+    point, not relative humidity directly."""
     if temperature_c is None or dewpoint_c is None or pd.isna(temperature_c) or pd.isna(dewpoint_c):
         return None
     a, b = 17.625, 243.04
@@ -229,14 +181,11 @@ def relative_humidity_percent(temperature_c: float | None, dewpoint_c: float | N
 @st.cache_data(ttl=900, show_spinner="Fetching live weather from DWD...")
 def fetch_forecast(station_id: str) -> pd.DataFrame:
     """Return the latest MOSMIX forecast for one station as a tidy
-    (station_id, parameter, date, value) frame -- the same long/tidy shape
-    src/data_loader.py's load_data() returns -- with `date` already
-    converted from DWD's UTC timestamps to Europe/Berlin local time.
+    (station_id, parameter, date, value) frame, with `date` converted to
+    Europe/Berlin local time.
 
-    Cached for 15 minutes (`ttl=900`). Unlike the rest of this app's
-    @st.cache_data uses, which cache historical data indefinitely (it never
-    changes), MOSMIX is genuinely live and DWD re-issues it ~4x/day, so an
-    indefinite cache would silently go stale.
+    Cached for 15 minutes -- unlike this app's other @st.cache_data uses,
+    MOSMIX is genuinely live and would go stale under an indefinite cache.
     """
     request = DwdMosmixRequest(
         parameters=[("hourly", "large", parameter) for parameter in PARAMETERS],
@@ -289,14 +238,12 @@ def current_snapshot(df: pd.DataFrame) -> dict[str, object]:
 
 
 def daily_summary(df: pd.DataFrame, days: int = 7) -> pd.DataFrame:
-    """One row per upcoming local calendar day: high/low temperature,
-    total precipitation, max wind gust, and a representative weather
-    icon/label (the forecast nearest to local noon that day).
+    """One row per upcoming local calendar day: high/low temperature, total
+    precipitation, max wind gust, and a representative weather icon/label
+    (the forecast nearest to local noon that day).
 
-    Note for the report's limitations section: MOSMIX only forecasts
-    forward from its issue time (~now), so "today" only ever covers the
-    remaining hours of the day, not the full 24h -- its high/low can
-    understate the day's actual range if run later in the afternoon.
+    Note: MOSMIX only forecasts forward from its issue time, so "today" can
+    understate the day's actual high/low if run later in the afternoon.
     """
     pivot = df.pivot(index="date", columns="parameter", values="value").sort_index()
     local_dates = pivot.index.date

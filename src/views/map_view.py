@@ -1,10 +1,4 @@
-"""Map tab: mean parameter value per station, plotted geographically.
-
-(Cluster-coloring used to live here as an alternate mode; it's moved to
-the Clustering tab's own "Map View" option instead -- see
-src/views/clustering.py -- so cluster-by-map and cluster-by-scatter sit
-together in one place rather than being split across two tabs.)
-"""
+"""Map tab: mean parameter value per station, plotted geographically."""
 
 import plotly.express as px
 import streamlit as st
@@ -50,10 +44,6 @@ def render(ctx: DashboardContext) -> None:
         hover_name="name", zoom=4.5, map_style="open-street-map",
         labels={"value": pretty_name(parameter)},
     )
-    # CHART_ROW_WIDTH_RATIO's share of the row, same as every other
-    # chart-bearing tab (Time Series, Regression, Clustering) -- see
-    # common.py for where this convention started. Key Figures goes in
-    # the remaining column, right next to the map.
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0]:
         render_full_bleed_map(fig, _CHART_CARD_KEY, missing, _MISSING_ANCHOR)

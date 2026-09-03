@@ -21,12 +21,8 @@ PRIMARY = {
 }
 
 def _with_hue(hex_color: str, hue_degrees: float | None, saturation: float | None = None) -> str:
-    """Return ``hex_color`` with its hue (and optionally saturation)
-    replaced, keeping its own lightness -- and, unless overridden, its own
-    saturation -- untouched. Used to derive a whole category's palette from
-    the app's default blue one token-by-token, so every derived color keeps
-    the exact same HSL "recipe" (same S, same L) as its blue counterpart,
-    only the hue rotates (or, for "neutral", saturation drops to 0)."""
+    """Return ``hex_color`` with its hue (and optionally saturation) replaced,
+    keeping its lightness untouched."""
     r, g, b = (int(hex_color[i : i + 2], 16) / 255 for i in (1, 3, 5))
     h, l, s = colorsys.rgb_to_hls(r, g, b)
     h = h if hue_degrees is None else hue_degrees / 360
@@ -37,18 +33,6 @@ def _with_hue(hex_color: str, hue_degrees: float | None, saturation: float | Non
 
 _THEME_TOKENS = {**SURFACE, **PRIMARY}
 
-# "neutral" still derives algorithmically from the blue tokens above
-# (desaturating to 0% keeps their exact lightness, which is all a clean
-# grey needs -- confirmed to look good). "precipitation" and "temperature"
-# are hand-picked instead of hue-rotated: rotating navy's hue to yellow
-# while keeping its same (fairly low) lightness/saturation lands on
-# olive/khaki, not a vivid yellow -- a "pure"-looking yellow only exists
-# at high lightness *and* high saturation, a band navy was nowhere near.
-# Hand-picking both categories (rather than just yellow) keeps them a
-# matched, equally-vivid "poppy" pair instead of one vivid one and one
-# left muted. on_primary_container (used as plain text throughout the
-# app) still clears WCAG AA comfortably: blue 8.6:1, yellow 7.1:1 against
-# white.
 PALETTES_BY_CATEGORY = {
     "precipitation": {
         "surface": "#EDF3FE",
@@ -59,14 +43,6 @@ PALETTES_BY_CATEGORY = {
         "outline_variant": "#B8CDF0",
         "primary": "#2979FF",
         "primary_container": "#D6E4FF",
-        # Desaturated and hue-shifted further toward slate/indigo from a
-        # "textbook" fully-saturated royal blue (#0D47A1, HSL 216/85/34) --
-        # that much saturation on a pure primary hue is what reads as
-        # clip-art/PowerPoint blue. This is the same token used as plain
-        # text everywhere in the app (see ACCENT_HEX_BY_CATEGORY below), so
-        # only it changes here -- "primary"/"primary_container" above are
-        # separate tokens for other UI elements (progress-bar fills etc.)
-        # the user wasn't asking to retint.
         "on_primary_container": "#31469B",
     },
     "temperature": {
@@ -83,14 +59,7 @@ PALETTES_BY_CATEGORY = {
     "neutral": {name: _with_hue(hexval, hue_degrees=None, saturation=0.0) for name, hexval in _THEME_TOKENS.items()},
 }
 
-# Key Figures toolbar accent per src.analysis.categorize_parameter() --
-# the "on_primary_container" token out of each category's full palette
-# above, i.e. the exact same #1E4469 (blue) / #695A1E (gold) / #444444
-# (grey) family every other themed element in the app now reads (see
-# render_section_label() in src/views/common.py, render_brand() and
-# _current_ink_hex() above). This used to read the "primary" token
-# instead, which desaturates to a visibly lighter grey (#8C8C8C) under
-# the "neutral" theme.
+# Key Figures toolbar accent, keyed by categorize_parameter()'s category.
 ACCENT_HEX_BY_CATEGORY = {category: palette["on_primary_container"] for category, palette in PALETTES_BY_CATEGORY.items()}
 
 
@@ -178,18 +147,8 @@ _BASE_CSS = """
 [data-testid="stHeader"] {
     height: 2rem;
 }
-/* Every st.segmented_control() in the app -- the main navigation (see
-   app.py; standing in for st.tabs() so a shared station/date-range row
-   can sit between the nav and whichever view is showing, which a real
-   tab bar can't host since its header and content are one atomic widget)
-   and the Temperature composite's Mean/Max/Min trend-line toggle (see
-   _render_temperature_band()'s caller in src/views/time_series.py) --
-   both render through this same [data-testid="stButtonGroup"] widget, so
-   one shared rule styles every option as the same rounded-card look
-   chart_card() below uses, with the active option picked out by a solid
-   fill of the app's current accent color (var(--m3-primary), the same
-   one driving the "Key Figures" stat-accent boxes) rather than a second,
-   different "selected" treatment. */
+/* Styles every st.segmented_control() (main nav + Temperature trend toggle)
+   as a rounded-card look, active option filled with the accent color. */
 [data-testid="stButtonGroup"] {
     gap: 0.75rem !important;
 }
@@ -218,10 +177,7 @@ _BASE_CSS = """
     color: #FFFFFF !important;
     font-weight: 700 !important;
 }
-/* Real st.tabs() styling, still needed for the Global Warming view's own
-   "Global Warming Trend"/"Future Prediction" sub-tabs (see
-   src/views/global_warming.py) even though the top-level nav above no
-   longer uses st.tabs(). */
+/* Real st.tabs() styling, used by Global Warming's sub-tabs. */
 [data-testid="stTabPanel"] > [data-testid="stVerticalBlock"] {
     gap: 1rem !important;
 }
@@ -255,13 +211,7 @@ _BASE_CSS = """
 [data-testid="stTab"][aria-selected="true"] p {
     color: var(--m3-on-primary-container, #1E4469) !important;
 }
-/* Same lift+full-color hover affordance the segmented-control navs use
-   (see render_segmented_nav_css() in src/views/common.py) on the
-   unselected tab only -- the active one doesn't need an invitation to
-   click. Placement/width intentionally untouched here (content-sized,
-   left-aligned, not stretched or centered) -- this reskin is typography/
-   color/indicator/hover only, same visual language as the other nav
-   rows without changing this one's layout. */
+/* Same lift+color hover as the segmented-control navs, unselected tab only. */
 [data-testid="stTab"]:not([aria-selected="true"]):hover {
     transform: translateY(-3px);
 }
@@ -281,19 +231,32 @@ _BASE_CSS = """
     -webkit-text-fill-color: var(--m3-on-primary-container, #1E4469) !important;
 }
 
+/* backdrop-filter lives on a ::before, not this box directly: applied here,
+   it'd make position:fixed fullscreen charts resolve against this card
+   instead of the viewport and get clipped by overflow:hidden below. No
+   z-index either -- that would trap the fullscreen frame's stacking too. */
 [data-testid="stVerticalBlockBorderWrapper"][data-testid="stVerticalBlockBorderWrapper"]:not([data-testid="stAppViewBlockContainer"] > *),
 [data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"] {
-    background:
-        linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
-        color-mix(in srgb, color-mix(in srgb, white 80%, var(--m3-surface-container-low, #D8E2EC) 20%) 80%, transparent) !important;
-    -webkit-backdrop-filter: blur(16px) saturate(150%);
-    backdrop-filter: blur(16px) saturate(150%);
+    position: relative;
     border: 1px solid rgba(255, 255, 255, 0.5) !important;
     outline: none !important;
     border-radius: 24px !important;
     box-shadow: 0 12px 32px rgba(28, 42, 59, 0.16) !important;
     padding: 1.5rem !important;
     overflow: hidden !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"][data-testid="stVerticalBlockBorderWrapper"]:not([data-testid="stAppViewBlockContainer"] > *)::before,
+[data-testid="stLayoutWrapper"] > [data-testid="stVerticalBlock"]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 55%),
+        color-mix(in srgb, color-mix(in srgb, white 80%, var(--m3-surface-container-low, #D8E2EC) 20%) 80%, transparent) !important;
+    -webkit-backdrop-filter: blur(16px) saturate(150%);
+    backdrop-filter: blur(16px) saturate(150%);
 }
 
 [data-testid="stMultiSelect"] [data-baseweb="select"],
@@ -361,16 +324,8 @@ _BASE_CSS = """
 [class*="-stat-plain"] [data-testid="stMetricValue"] {
     font-size: 29px !important;
 }
-/* st.slider()'s thumb jumps straight to each new step position with no
-   transition of its own -- most noticeable on a slider with few possible
-   values spread over a wide track (e.g. Clustering's 2-6 "Number of
-   clusters"), where each step covers a large chunk of the track and the
-   jump reads as the drag skipping rather than sliding. This doesn't
-   change the discrete stepping itself (the value still can only ever be
-   a whole number), just animates the thumb (and the filled portion of
-   the track behind it) gliding to each new step instead of teleporting.
-   Targeted by its inline transform rather than BaseWeb's own hashed
-   class name, since that hash isn't a stable selector across versions. */
+/* Animates st.slider()'s thumb gliding between steps instead of jumping.
+   Targeted by inline transform since BaseWeb's class hash isn't stable. */
 [data-testid="stSlider"] div[style*="translate(-50%, -50%)"] {
     transition: left 0.1s ease-out;
 }
@@ -388,63 +343,21 @@ def _render_theme_vars(palette: dict[str, str]) -> None:
 
 def render_app_background() -> None:
     st.markdown(_BASE_CSS, unsafe_allow_html=True)
-    # Paint whichever theme this session last landed on (falling back to
-    # "neutral" -- the same default apply_dynamic_theme() itself falls back
-    # to) right away, instead of always starting from a hardcoded
-    # "precipitation" (blue) palette and letting apply_dynamic_theme() correct
-    # it at the very end of the script. Streamlit streams each st.markdown()
-    # to the browser as soon as it executes rather than batching the whole
-    # script's output, so that hardcoded starting palette was visibly
-    # painted for a moment before apply_dynamic_theme()'s correction arrived
-    # -- a blue flash on every load/rerun whenever the actual theme wasn't
-    # blue (confirmed empirically). Reading the same "active_theme_parameter"
-    # apply_dynamic_theme() reads lets this first paint already match in the
-    # common case (nothing this run changes it); apply_dynamic_theme() still
-    # runs at the end to correct it for the now-rare case where this run's
-    # own view/selection actually changes the category.
     parameter = st.session_state.get("active_theme_parameter")
     category = categorize_parameter(parameter) if parameter else "neutral"
     _render_theme_vars(PALETTES_BY_CATEGORY[category])
 
 
 def apply_dynamic_theme(parameter: str | None) -> None:
-    """Re-assert every --m3-* custom property (and .stApp's background)
-    using the color category of ``parameter`` (see categorize_parameter()
-    in src/analysis.py), overriding the best-guess palette
-    render_app_background() already painted at the top of the script (see
-    its own docstring) with this run's actual, final category -- the two
-    only ever disagree when this run's own view/selection changed it.
-
-    CSS custom properties on :root apply document-wide regardless of where
-    in the page's source their defining <style> tag sits, and the later of
-    two equal-specificity :root rules wins -- so calling this once, after
-    the current view (and so its own "Parameter" dropdown, if it has one)
-    has rendered, is enough to re-theme the page background, brand text,
-    nav row, and every other var()-driven color in one shot. It
-    intentionally doesn't touch Plotly chart colors (style_fig() in this
-    module) -- those are baked into each figure as literal RGB values at
-    build time, not read from CSS, and were deliberately kept on a fixed
-    colorblind-friendly palette per earlier feedback on this dashboard.
-
-    ``parameter`` is whichever of the several independent per-view
-    "Parameter" dropdowns the user most recently changed (tracked in
-    st.session_state by render_parameter_and_subset() in
-    src/views/common.py) -- there's no single "current" parameter since
-    every view keeps its own selection, so this app-wide theme follows
-    whichever one was touched last, defaulting to "neutral" (this app's
-    every dropdown defaults to the alphabetically-first parameter, which
-    is "Cloud Cover Total") before the user has touched any of them."""
+    """Re-assert every --m3-* CSS var using ``parameter``'s color category,
+    overriding render_app_background()'s best-guess palette with this run's
+    actual one. Doesn't touch Plotly chart colors -- those stay on a fixed
+    colorblind-friendly palette (see style_fig())."""
     category = categorize_parameter(parameter) if parameter else "neutral"
     _render_theme_vars(PALETTES_BY_CATEGORY[category])
 
 
 def render_brand() -> None:
-    # Same --m3-on-primary-container token every other piece of themed
-    # text in the app reads (render_section_label() in
-    # src/views/common.py, the Live Weather hero's city name, the nav
-    # capsule/tab styling above) -- this used to read --m3-primary
-    # instead, which desaturates to a visibly different grey under the
-    # "neutral" theme (#8C8C8C vs #444444).
     st.markdown(
         f'<div class="app-brand" style="text-align: left; font-weight: 700; '
         f'font-size: 1.85rem; letter-spacing: 0.02em; '
@@ -454,28 +367,15 @@ def render_brand() -> None:
 
 
 def chart_card(key: str | None = None):
-    """``key`` is only needed by callers that must target this specific
-    card with scoped CSS afterwards (e.g. positioning an overlay icon over
-    one particular chart) -- see render_missing_stations_indicator() in
-    src/views/common.py. Streamlit adds an "st-key-{key}" class to the
-    container's wrapper div, so passing one doesn't change anything
-    visually by itself."""
+    """``key`` lets callers target this specific card with scoped CSS
+    afterwards (Streamlit adds an "st-key-{key}" class to the wrapper)."""
     return st.container(border=True, key=key)
 
 
 def _current_ink_hex() -> str:
-    """Solid on_primary_container-family hex for whatever theme category
-    the app-wide dynamic theme (see apply_dynamic_theme()) is currently
-    on -- the exact same token render_section_label() and the Live
-    Weather hero's city name use (src/views/common.py,
-    src/views/live_weather.py), so a chart's chrome (axis ticks,
-    gridlines, legend, title, modebar) always matches the page text
-    sitting around it: #1E4469 (blue) / #695A1E (gold) / #444444 (grey).
-    Only chart *chrome* follows the theme this way -- each view's own
-    data-series colors (px.line/... colors, station colors, trend-line
-    colors) stay on their fixed, colorblind-friendly palette per this
-    dashboard's earlier accessibility feedback, since those encode data
-    and must stay distinguishable regardless of theme."""
+    """Text-color hex for the current theme category, so chart chrome (axis
+    ticks, gridlines, legend, title) matches the page text around it. Only
+    chrome follows the theme -- data-series colors stay fixed for a11y."""
     parameter = st.session_state.get("active_theme_parameter")
     category = categorize_parameter(parameter) if parameter else "neutral"
     return PALETTES_BY_CATEGORY[category]["on_primary_container"]
@@ -496,14 +396,6 @@ def style_fig(fig: go.Figure) -> go.Figure:
         font_color=ink,
         title_font_color=ink,
         legend=dict(bgcolor="rgba(0,0,0,0)", font_color=ink),
-        # Tightened from t=60/b=50/l=40/r=40 -- every chart in the app goes
-        # through this one function, so this is the actual plotted area's
-        # own share of its card shrinking regardless of the card's own CSS
-        # padding (see the chart_card() rule in _BASE_CSS below, left
-        # untouched here since it's shared by every bordered card in the
-        # app, not just charts -- shrinking it would also cramp Key
-        # Figures stat cards etc.). Still enough room for the title and
-        # axis ticks/labels, just not padded past what they need.
         margin=dict(t=42, b=36, l=30, r=20),
         modebar=dict(bgcolor="rgba(0,0,0,0)", color="#90A4AE", activecolor=ink),
     )

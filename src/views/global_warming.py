@@ -1,11 +1,6 @@
-"""Discover Global Warming tab, split into two sub-tabs:
-
-- "Global Warming Trend": temperature anomaly, hot days/nights, and
-  heavy-rain indicators for the selected cities, all driven by
-  user-adjustable settings rather than fixed years/thresholds.
-- "Future Prediction": model-forecasted hot-day counts and average July
-  temperatures, independent of the trend tab's settings/station selection.
-"""
+"""Discover Global Warming tab: "Global Warming Trend" (user-adjustable
+settings) and "Future Prediction" (model forecasts, independent of the
+trend tab's settings)."""
 
 import calendar
 import datetime as dt
@@ -46,10 +41,8 @@ def _warn_about_missing_coverage(
 ) -> None:
     """Warn per city about any chart that will render empty for it.
 
-    Some DWD stations only report a subset of parameters (e.g. wind-only
-    airfield stations), so a selected station can lack temperature or
-    precipitation data entirely. Without this, those charts just render
-    blank with no explanation -- indistinguishable from a bug.
+    Some DWD stations only report a subset of parameters, so a chart can
+    otherwise render blank with no explanation.
     """
     for city in city_stations:
         missing: list[str] = []
@@ -136,11 +129,6 @@ def _render_future_forecast(
 
 
 def render(ctx: DashboardContext) -> None:
-    # Two sub-tabs, same st.tabs() component (and so the same styling) as
-    # the top-level "Discover Global Warming"/"Time Series"/etc. row this
-    # sits directly under -- trend charts (all driven by the settings
-    # expander below) in one, the independent forecast models in the
-    # other, rather than one long scroll mixing both kinds of content.
     trend_tab, prediction_tab = st.tabs(["Global Warming Trend", "Future Prediction"])
     with trend_tab:
         _render_trend_tab(ctx)
@@ -152,11 +140,8 @@ def _render_trend_tab(ctx: DashboardContext) -> None:
     city_stations = {name: ctx.id_by_name[name] for name in ctx.selected_names}
     current_year = dt.date.today().year
 
-    # Each station's own period of record differs (e.g. München-Stadt only
-    # starts mid-1954), so bound the year controls by what's actually
-    # available for every currently selected station -- a baseline period
-    # that predates a station silently drops that city's anomaly (NaN),
-    # which looks like a data bug rather than an invalid setting.
+    # Bound year controls by the latest start date among selected stations;
+    # an earlier baseline silently drops that city's anomaly as NaN.
     station_metadata = load_station_metadata(list(city_stations.values()))
     earliest_common_year = pd.to_datetime(station_metadata["start_date"]).dt.year.max()
     min_selectable_year = int(earliest_common_year) if pd.notna(earliest_common_year) else TREND_START_YEAR

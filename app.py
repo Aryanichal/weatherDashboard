@@ -26,20 +26,12 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 render_app_background()
 render_brand()
 
-# Runs once per server process (see its own docstring in src/data_loader.py
-# for why a plain module-level flag there makes every subsequent call --
-# including one on every rerun of this script, which is every interaction
-# in the app -- an instant no-op rather than spawning a thread each time).
-# Warms Clustering/Map's cluster mode for the app's default region/date
-# range in the background, so opening those tabs doesn't always pay the
-# full DWD fetch cost live.
+# Warms Clustering/Map's default region/date range in the background so
+# opening those tabs doesn't always pay the full DWD fetch cost live.
 start_background_region_prefetch()
 
-# A handful of well-known, geographically spread-out stations preselected
-# so the app is usable immediately, without the user having to search the
-# full list first. Only the IDs are hardcoded -- display names are always
-# looked up from the loaded station list below, so they match DWD's actual
-# official spelling instead of a hand-typed label going stale/wrong.
+# Geographically spread-out stations preselected so the app is usable
+# immediately. Only IDs are hardcoded; display names are looked up below.
 DEFAULT_STATION_IDS = [
     "00433",  # Berlin-Tempelhof
     "03379",  # München-Stadt
@@ -47,14 +39,8 @@ DEFAULT_STATION_IDS = [
     "01975",  # Hamburg-Fuhlsbüttel
     "04928",  # Stuttgart (Schnarrenberg)
 ]
-# A compact, useful city list for the normal station picker (see the
-# "Browse all DWD stations" checkbox below). The complete DWD directory
-# remains available through that optional browse control -- this is just
-# what shows before it's checked. Unioned with DEFAULT_STATION_IDS
-# wherever it's actually used so the preselected defaults above always
-# resolve to something pickable even before browsing is turned on, rather
-# than silently losing whichever of them (Hamburg-Fuhlsbüttel, Stuttgart)
-# aren't already on this shorter list.
+# Compact city list shown before "Browse all DWD stations" is checked.
+# Unioned with DEFAULT_STATION_IDS so the preselected defaults stay pickable.
 RECOMMENDED_CITY_STATION_IDS = ["00433", "01048", "03379", "01420", "02014", "01443"]
 
 HISTORICAL_VIEWS = {
@@ -66,55 +52,11 @@ HISTORICAL_VIEWS = {
 }
 _HISTORICAL_VIEW_KEY = "active_historical_view"
 _SHARED_HISTORICAL_VIEW_KEY = "shared_active_historical_view"
-
-# Two-tier navigation: the top-level choice is "what kind of weather info
-# do I want" -- live, right-now conditions vs. digging into historical
-# data -- not a flat row of six tabs. Only after picking "Analyse
-# Historical Data" does its own five-way sub-nav (and the shared selection/
-# date-range row below it, which only means something for those five
-# views) appear -- that row's left slot is the station multiselect for four
-# of them, swapped for a "Region" selectbox on Clustering (see below).
-# Live Weather is a single, self-contained view with its
-# own location picker and no "date range" concept at all (see
-# src/views/live_weather.py's module docstring), so it never needs
-# either -- hence it being its own top-level branch rather than a sixth
-# option alongside the historical ones.
-#
-# st.segmented_control() stands in for st.tabs() at both levels
-# specifically so the station/date-range row can sit between the sub-nav
-# and whichever historical view is showing. st.tabs() can't host that:
-# its header and content are one atomic widget, and anything placed after
-# st.tabs() but before its `with tab:` blocks renders below the active
-# tab's full content, not between the header and it (confirmed
-# empirically, not just from docs). One side effect: unlike st.tabs() --
-# which runs every tab's body every script pass, only hiding the inactive
-# ones in the DOM -- only the selected option's own render() call
-# actually executes here. That's a bit more efficient and doesn't change
-# apply_dynamic_theme()'s behavior (see its docstring), since each view's
-# own widget state still persists in st.session_state across runs
-# regardless of whether it rendered.
-# Bare text, no capsule/pill skin at all -- large and bold enough to read as
-# a section header (matching render_brand()'s own weight/letter-spacing in
-# src/ui_theme.py) rather than a button. See render_segmented_nav_css() in
-# src/views/common.py for the shared implementation -- the "Weather
-# Analysis" sub-nav just below reuses the exact same look, at a smaller
-# font size (5 columns instead of 2 need to share the row).
 _TOP_LEVEL_NAV_KEY = "top_level_nav"
-# Tightened from 1.5rem: the sub-nav sits directly below this as the
-# second tier of one navigation hierarchy (not a new content section), so
-# the two rows read as a connected pair rather than two independently-
-# spaced blocks -- the looser gap now lives between the sub-nav and the
-# station/date-range controls below it instead (see the
-# render_segmented_nav_css() call for _HISTORICAL_VIEW_KEY below).
 render_segmented_nav_css(_TOP_LEVEL_NAV_KEY, option_count=2, font_size="2.5rem", margin_bottom="1rem")
 
-# Clustering's own "Map View"/"Scatter Plot" toggle needs its styling
-# present in the DOM on every rerun, not only while Clustering itself is
-# showing -- see render_view_selector_css()'s own docstring in
-# src/views/clustering.py for the one-frame flash of Streamlit's default
-# pill-button skin this fixes on the exact rerun that switches away to
-# Live Weather. A scoped CSS rule with nothing to match is a no-op, so
-# this costs nothing on every other run.
+# Must run every rerun (not just while Clustering shows) to avoid a
+# one-frame flash of the default pill-button skin when switching tabs.
 clustering.render_view_selector_css()
 
 top_level = st.segmented_control(
@@ -126,42 +68,20 @@ top_level = st.segmented_control(
     width="stretch",
 )
 if not top_level:
-    # Returns None if the selected option is clicked again to deselect it
-    # -- fall back to the default rather than showing nothing.
+    # None if the option was clicked again to deselect it.
     top_level = "Live Weather"
 
 if top_level == "Live Weather":
     live_weather.render()
 else:
-    # Same durable-shared-key re-seed trick as _SHARED_PARAMETER_KEY in
-    # src/views/common.py: this sub-nav's own widget state gets dropped by
-    # Streamlit the moment "Live Weather" is picked at the top level (it
-    # stops rendering entirely for that rerun), so without this, coming
-    # back to "Weather Analysis" would always reset to "Time
-    # Series" instead of wherever the user actually was.
+    # Re-seed the sub-nav's widget state: Streamlit drops it whenever "Live
+    # Weather" is picked instead, so without this it'd reset every time.
     shared_view = st.session_state.get(_SHARED_HISTORICAL_VIEW_KEY)
     if shared_view in HISTORICAL_VIEWS and _HISTORICAL_VIEW_KEY not in st.session_state:
         st.session_state[_HISTORICAL_VIEW_KEY] = shared_view
 
-    # Same bare-text, sliding-underline skin as the top-level Live Weather/
-    # Weather Analysis switch above (see render_segmented_nav_css() in
-    # src/views/common.py) instead of this row's previous default pill-
-    # button look -- smaller font than the top-level nav's 2.5rem since 5
-    # columns, not 2, have to share the row without wrapping ("Discover
-    # Global Warming" is the long pole). A small margin-top keeps this
-    # visually paired with the top-level nav right above it as one
-    # two-tier hierarchy; the much larger margin-bottom is what actually
-    # separates it from the station/date-range controls below, which are
-    # a distinct content section, not another nav tier.
-    #
-    # Clustering is the one exception: its own "Map View"/"Scatter Plot"
-    # row (render_view_selector() in src/views/clustering.py) renders
-    # directly below this one as a third nav tier, not a content section,
-    # so it needs the tight top-level-to-sub-nav spacing instead of the
-    # wide one -- read from session_state here (already seeded with
-    # whichever view is about to render, either from the widget's own
-    # persisted value or the reseed right above) since that's known before
-    # the widget below actually runs.
+    # Clustering renders its own nav tier right below this one, so it needs
+    # tighter spacing than the other views.
     is_clustering = st.session_state.get(_HISTORICAL_VIEW_KEY) == "Clustering"
     render_segmented_nav_css(
         _HISTORICAL_VIEW_KEY, option_count=len(HISTORICAL_VIEWS), font_size="1.05rem",
@@ -179,39 +99,21 @@ else:
         active_view = "Time Series"
     st.session_state[_SHARED_HISTORICAL_VIEW_KEY] = active_view
 
-    # id_to_name/id_by_name cover every station DWD has, not just whatever
-    # ends up selected below -- Clustering (see src/views/clustering.py)
-    # relies on that to look up display names for stations outside the
-    # multiselect entirely, since it clusters over a whole region instead.
+    # Covers every DWD station, not just what's selected below -- Clustering
+    # looks up names for stations outside the multiselect entirely.
     stations_df = load_stations()
     name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
     id_by_name = {v: k for k, v in name_by_id.items()}
 
-    # Clustering's own "Map View"/"Scatter Plot" toggle renders here,
-    # directly above the Region/Date-range row, rather than inside
-    # clustering.render() itself below -- so it reads as one more level of
-    # the page's own top navigation (see render_view_selector()'s
-    # docstring in src/views/clustering.py) instead of a control sitting
-    # below content that hasn't rendered yet.
+    # Rendered here (above Region/Date-range) so it reads as another level
+    # of top nav, not a control below content that hasn't rendered yet.
     if active_view == "Clustering":
         clustering.render_view_selector()
 
-    # Clustering runs over every station in a region (see
-    # stations_in_region() in src/data_loader.py), not a hand-picked
-    # selection, so the station multiselect the other four views share
-    # doesn't apply to it -- showing it there would just be a control that
-    # silently does nothing. It gets a "Region" selectbox in that same slot
-    # instead; Date range still applies to every view, Clustering included.
-    # Map View's own "Cluster stations by" multiselect renders further
-    # down, alongside its k-slider (see _render_map_view() in src/views/
-    # clustering.py), rather than in this row.
     selection_cols = st.columns([3, 1])
 
-    # Date range renders first (into its own column) since the "Weather
-    # stations" side below now depends on it -- filtering to date-
-    # compatible stations needs start_date/end_date already chosen, so
-    # that column's own block has to come after this one despite them
-    # sharing one row.
+    # Renders first: "Weather stations" below needs start_date/end_date
+    # already chosen to filter to date-compatible stations.
     with selection_cols[1]:
         render_section_label("Date range")
         start_date, end_date = st.date_input(
@@ -236,27 +138,17 @@ else:
             stations_df["end_date"] = pd.to_datetime(stations_df["end_date"], utc=True, errors="coerce")
             selected_start = pd.Timestamp(start_date, tz="UTC")
             selected_end = pd.Timestamp(end_date, tz="UTC")
-            # The DWD station list contains a station's reporting window. Restrict
-            # choices to windows that overlap the chosen dates, so users cannot
-            # select a station that has no climate-summary data for this analysis.
+            # Restrict to stations whose reporting window overlaps the chosen dates.
             date_compatible_stations = stations_df.loc[
                 (stations_df["start_date"] <= selected_end)
                 & (stations_df["end_date"].isna() | (stations_df["end_date"] >= selected_start))
             ]
-            # Read the checkbox's own persisted value before the widget itself
-            # renders (it keeps its key across reruns the same way any other
-            # keyed widget does) so "Weather stations" -- like Date range in
-            # the column next to it -- can be the first thing in this column,
-            # rather than sitting one widget lower than Date range because
-            # this checkbox used to render above it.
+      
             show_all_stations = st.session_state.get("browse_all_historical_stations", False)
             available_stations = (
                 date_compatible_stations
                 if show_all_stations
                 else date_compatible_stations.loc[
-                    # Unioned with DEFAULT_STATION_IDS (see its own comment
-                    # above) so the preselected defaults stay pickable here
-                    # even before "browse all" is turned on.
                     date_compatible_stations["station_id"].isin(
                         set(RECOMMENDED_CITY_STATION_IDS) | set(DEFAULT_STATION_IDS)
                     )
@@ -301,9 +193,7 @@ else:
 
     if active_view == "Clustering":
         # Clustering fetches its own region-scoped data independently (see
-        # src/views/clustering.py) -- nothing here needs the shared "raw"
-        # frame, so skip fetching it entirely rather than downloading data
-        # for the (unused, in this view) default station selection.
+        # src/views/clustering.py) 
         raw = pd.DataFrame()
     else:
         if not selected_ids:
@@ -343,8 +233,6 @@ else:
 
     HISTORICAL_VIEWS[active_view].render(ctx)
 
-# Re-themes the whole page (background, brand, nav row, ...) to whichever
-# view's "Parameter" dropdown the user most recently changed -- see
-# apply_dynamic_theme()'s docstring for why this has to run after the
-# view renders rather than once at the top.
+# Re-themes the page to whichever "Parameter" dropdown was last changed;
+# must run after the view renders (see apply_dynamic_theme()).
 apply_dynamic_theme(st.session_state.get("active_theme_parameter"))

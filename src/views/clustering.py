@@ -1,32 +1,13 @@
 """Clustering tab: group stations by chosen weather parameter(s).
 
 Two ways to view the same underlying KMeans grouping, picked via the
-"View as" toggle rendered by render_view_selector() below -- app.py calls
-that directly above the shared Region/Date-range row (rather than this
-module's own render() rendering it inline, like every other per-view
-control does) specifically so it reads as one more level of the page's
-own navigation, sitting right under the Time Series/Map/Regression/
-Clustering/Global Warming row rather than below content that hasn't
-rendered yet:
+"View as" toggle (render_view_selector() below):
+- "Scatter Plot": exactly two chosen parameters plotted as X/Y axes.
+- "Map View": station position is real lat/long, so clustering can use
+  any number of parameters (default: all).
 
-- "Scatter Plot": exactly two chosen parameters plotted directly as X/Y
-  axes, so every axis is real and directly readable (no synthetic
-  composite axes to interpret).
-- "Map View": station position comes from real latitude/longitude instead
-  of an abstract feature-space scatter, so clustering is free to use as
-  many parameters as picked (default: all of them) without ever needing a
-  PCA-style projection -- parameters only ever show up as a color, never
-  as a plotting axis. Geography is often exactly what explains why
-  stations land in the same cluster (coastal vs. inland, north vs. south,
-  altitude, ...), so seeing it directly on a map can be more legible than
-  the scatter's own chart. (This used to be a "Cluster" color mode on the
-  Map tab itself; moved here so both ways of viewing a cluster live in one
-  tab instead of being split across two.)
-
-Both run over a real population of stations (every station reporting in a
-region, not the handful a user happens to have picked in the station
-multiselect elsewhere in the app) -- see stations_in_region() in
-src/data_loader.py for why clustering specifically needs that.
+Both cluster over every station reporting in the region, not just the
+ones picked in the station multiselect elsewhere in the app.
 """
 
 import pandas as pd
@@ -59,15 +40,8 @@ _VIEW_MODE_KEY = "clustering_view_mode"
 _SCATTER_CHART_CARD_KEY = "chart-card-parameter_clustering"
 _MAP_CHART_CARD_KEY = "chart-card-parameter_clustering_map"
 _MAP_DIAGNOSTICS_CARD_KEY = "chart-card-parameter_clustering_map_diagnostics"
-# Seeds each slider with the recommended k (see compute_k_diagnostics()
-# in src/analysis.py) -- st.slider() then owns the key itself from then
-# on, so a manual drag sticks *until the recommendation itself changes*
-# (a different parameter/region selection recomputes a new best_k), at
-# which point the slider re-seeds to follow it rather than being left
-# pointing at a now-stale recommendation (see _seed_k_slider() below).
-# Scatter and Map View get their own pairs of keys since they cluster on
-# different parameter sets (fixed 2 vs. however many are picked) and so
-# can land on different recommended k values.
+# Scatter and Map View get separate slider keys since they cluster on
+# different parameter sets and can recommend different k values.
 _K_SLIDER_KEY = "cluster_k_slider"
 _K_SLIDER_SEED_KEY = "cluster_k_slider_seed"
 _MAP_K_SLIDER_KEY = "cluster_map_k_slider"
@@ -75,11 +49,7 @@ _MAP_K_SLIDER_SEED_KEY = "cluster_map_k_slider_seed"
 _X_FEATURE_KEY = "cluster_x_feature"
 _Y_FEATURE_KEY = "cluster_y_feature"
 _MAP_FEATURES_KEY = "cluster_map_features"
-# Plotly Express's own default discrete-color sequence -- hardcoded (rather
-# than imported from plotly.express.colors.qualitative) so the custom
-# legend built in _render_cluster_legend() below stays visually identical
-# to whatever px.scatter_map() colors the dots with, without needing to
-# force a non-default color_discrete_sequence just to know the values.
+
 _CLUSTER_COLORS = [
     "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
     "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52",
@@ -87,46 +57,26 @@ _CLUSTER_COLORS = [
 
 
 def _seed_k_slider(slider_key: str, seed_key: str, best_k: int | None) -> None:
-    """Point ``slider_key`` at ``best_k`` whenever the recommendation
-    itself has changed since the last time this ran (tracked in
-    ``seed_key``) -- not just the first time the slider ever renders.
-    ``best_k`` only ever changes because the chosen parameters/region
-    changed (it doesn't depend on the slider's own value), so re-seeding
-    on every *change* rather than only once still leaves a manual drag
-    alone for as long as the recommendation it was based on stays valid,
-    while keeping the slider from silently pointing at a stale k after
-    the recommendation moves out from under it."""
+    """Re-seed ``slider_key`` to ``best_k`` only when the recommendation
+    changes (tracked via ``seed_key``), so a manual drag sticks until then."""
     if best_k is not None and st.session_state.get(seed_key) != best_k:
         st.session_state[slider_key] = best_k
         st.session_state[seed_key] = best_k
 
 
 def render_view_selector_css() -> None:
-    """Just the CSS half of render_view_selector() below, split out so
-    app.py can call it unconditionally on *every* rerun -- including runs
-    where Live Weather, not Clustering, is showing and the widget itself
-    never renders at all. A scoped CSS rule with no matching element in
-    the DOM is a harmless no-op, but calling it only while Clustering is
-    active (i.e. tied to the same condition as the widget) left a window,
-    on the exact rerun that switches away from Clustering, where the old
-    widget's DOM node could still be present for one paint while this
-    rule had already been removed -- visible as a one-frame flash of
-    Streamlit's own default pill-button skin on the "Map View"/"Scatter
-    Plot" control right before the page swaps to Live Weather. Keeping
-    the rule permanently in the DOM regardless of which view is active
-    removes that window instead of trying to win the race."""
+    """CSS half of render_view_selector(), split out so app.py can call it
+    unconditionally on every rerun -- calling it only while Clustering is
+    active caused a one-frame flash of unstyled pill buttons when leaving
+    the tab."""
     render_segmented_nav_css(_VIEW_MODE_KEY, option_count=2, font_size="1.05rem", margin_top="0.5rem", margin_bottom="1.5rem")
 
 
 def render_view_selector() -> None:
-    """The "Map View"/"Scatter Plot" widget itself, called by app.py
-    directly above the shared Region/Date-range row (before render()
-    below ever runs) so it sits as one more level of the page's own top
-    navigation rather than as a control below it. Its styling (see
-    render_view_selector_css() above) is injected separately and
-    unconditionally, not here. Stores its choice under _VIEW_MODE_KEY in
-    st.session_state; render() below reads it from there instead of
-    re-rendering the widget itself."""
+    """The "Map View"/"Scatter Plot" widget, called by app.py above the
+    shared Region/Date-range row so it reads as top-level page navigation.
+    Stores its choice under _VIEW_MODE_KEY; render() below reads it from
+    session_state rather than re-rendering the widget."""
     st.segmented_control(
         "View as",
         options=["Map View", "Scatter Plot"],
@@ -138,19 +88,13 @@ def render_view_selector() -> None:
 
 
 def current_view_mode() -> str:
-    """Whichever of "Map View"/"Scatter Plot" render_view_selector() above
-    last set, defaulting to "Map View" the same way render() below
-    does -- a small accessor so render() doesn't need to reach into this
-    module's session-state key directly."""
+    """Current "Map View"/"Scatter Plot" choice, defaulting to "Map View"."""
     return st.session_state.get(_VIEW_MODE_KEY) or "Map View"
 
 
 def render(ctx: DashboardContext) -> None:
-    # The "Region" selectbox itself lives in app.py, in the slot the other
-    # four views use for the station multiselect -- Clustering runs over
-    # every station in a region rather than a hand-picked list, so that
-    # multiselect doesn't apply to it (see DashboardContext.region's
-    # docstring in src/dashboard_context.py).
+    # Clustering runs over every station in the region, not the hand-picked
+    # multiselect the other views use.
     region = ctx.region
 
     view_mode = current_view_mode()
@@ -175,13 +119,8 @@ def _render_scatter_view(ctx: DashboardContext, region: str, candidate_stations:
         (p for p in DEFAULT_CLUSTER_FEATURES[1:] if p in available_features and p != default_x),
         next(p for p in available_features if p != default_x),
     )
-    # The actual selectbox widgets render *below* the chart (see
-    # _render_axis_selectors(), called at the bottom of this function) --
-    # reading the current choice straight from session_state here, before
-    # those widgets are even instantiated this run, is what makes that
-    # possible: a keyed widget's session_state entry already reflects a
-    # just-made choice by the time the script reruns from the top, so the
-    # chart above can use it immediately despite being built first.
+    # Read from session_state directly since the selectbox widgets that own
+    # these keys render below the chart (_render_axis_selectors()).
     x_feature = st.session_state.get(_X_FEATURE_KEY, default_x)
     y_feature = st.session_state.get(_Y_FEATURE_KEY, default_y)
 
@@ -246,8 +185,7 @@ def _render_scatter_view(ctx: DashboardContext, region: str, candidate_stations:
 
 def _render_axis_selectors(available_features: list[str], x_feature: str, y_feature: str) -> None:
     """The X/Y parameter pickers, deliberately rendered after the chart
-    they control (see _render_scatter_view()'s docstring comment on
-    reading them from session_state early) rather than above it."""
+    they control rather than above it."""
     axis_cols = st.columns(2)
     with axis_cols[0]:
         render_section_label("X-axis parameter")
@@ -274,11 +212,8 @@ def _scatter_chart(clustered, chosen_features: list[str], value_labels: dict[str
 
 
 def _render_cluster_legend(cluster_labels: list[str]) -> None:
-    """A plain-page legend for the map's discrete cluster colors, standing
-    in for Plotly's own in-chart legend (disabled inside
-    render_full_bleed_map()) -- keeps the chart_card() holding nothing but
-    the map itself, per the same "title/legend live outside the card"
-    treatment as the rest of this view."""
+    """Plain-page legend for the map's cluster colors, standing in for
+    Plotly's own in-chart legend (disabled in render_full_bleed_map())."""
     swatches = "".join(
         f'<span style="display:inline-flex; align-items:center; gap:0.4rem; margin:0 1.2rem 0.5rem 0;">'
         f'<span style="width:10px; height:10px; border-radius:50%; '
@@ -291,17 +226,10 @@ def _render_cluster_legend(cluster_labels: list[str]) -> None:
 
 
 def _render_region_caption(ctx: DashboardContext, text: str) -> None:
-    """Writes ``text`` into the Region column itself (see
-    DashboardContext.region_column's own docstring) instead of the full
-    page width below the shared row -- keeps it anchored directly under
-    the Region dropdown even while the "Cluster stations by" multiselect
-    next to it grows to 2-3 rows of chips, rather than being pushed down
-    to match whichever column in that row ends up tallest. A Streamlit
-    column reference stays writable after its own `with` block has
-    already closed, which is what makes appending to it from here, well
-    after app.py rendered it, possible at all. Falls back to a plain,
-    full-width caption if no column was captured (ctx.region_column is
-    None outside Clustering)."""
+    """Writes ``text`` into the Region column (kept writable after app.py's
+    own `with` block closed) instead of full page width, so it stays
+    anchored under the Region dropdown. Falls back to a full-width caption
+    if no column was captured."""
     if ctx.region_column is not None:
         with ctx.region_column:
             st.caption(text)
@@ -317,10 +245,7 @@ def _render_map_view(ctx: DashboardContext, region: str, candidate_stations: pd.
 
     _render_region_caption(ctx, "Clusters across every reporting station in this region, plotted by location.")
 
-    # Full-width, directly above the slider -- both stay in this simple
-    # top-to-bottom order in the code too, since nothing about the
-    # multiselect depends on data fetched later, while the slider's own
-    # label needs best_k, which does.
+
     render_section_label("Cluster stations by")
     chosen_features = st.multiselect(
         "Cluster stations by",
@@ -372,58 +297,21 @@ def _render_map_view(ctx: DashboardContext, region: str, candidate_stations: pd.
 
     value_labels = {f: parameter_label_with_unit(f) for f in chosen_features}
 
-    # A fixed, generic title rather than spelling out every chosen
-    # parameter (that list can run to a dozen names and dwarf the map
-    # below it) -- which parameters are in play is already legible from
-    # the multiselect above and each station's own hover tooltip, so this
-    # only needs to say what the map itself shows.
     cluster_order = sorted(merged["cluster"].unique(), key=int)
     render_section_label("Station clusters", style="header")
     _render_cluster_legend(cluster_order)
-    # An explicit center (roughly Germany's own geographic middle) rather
-    # than px.scatter_map()'s own default of centering on the mean of
-    # whichever stations happen to be plotted -- that drifts off-center
-    # whenever a chosen parameter excludes a lopsided chunk of the country
-    # (see the humidity example discussed above, which left mostly
-    # northern/eastern stations plotted). Zoom nudged up from 4.9 now that
-    # the map's own height has grown tall enough to otherwise pull in a
-    # visibly wider vertical slice of neighboring countries at the old
-    # zoom level.
+
     fig = px.scatter_map(
         merged, lat="latitude", lon="longitude", color="cluster", hover_name="name",
         hover_data=chosen_features, zoom=5.3, center={"lat": 51.2, "lon": 10.3}, map_style="open-street-map",
         category_orders={"cluster": cluster_order},
         color_discrete_sequence=_CLUSTER_COLORS,
     )
-    # Germany is a north-south-elongated country, so a full-page-width map
-    # spends most of its horizontal space on neighboring countries rather
-    # than Germany itself. Narrowing the column the map sits in -- rather
-    # than shrinking the figure inside a still-full-width card -- keeps
-    # chart_card() sized exactly to the map with no border/background
-    # revealed around empty space, since a Streamlit container always
-    # sizes itself to its column, not the page.
-    #
-    # Tall enough to reach the bottom of its neighboring column -- the
-    # diagnostics chart plus its own title/captions and the explanation
-    # box below it (see map_columns[1] below) run noticeably taller than
-    # a bare map would on its own, and Streamlit's own column flexbox
-    # already stretches this column to match that height regardless, so
-    # a short map otherwise just leaves blank space under itself instead
-    # of using it. Not something this can size itself to exactly (a fixed
-    # pixel height, same tradeoff render_key_figures_box() in
-    # src/views/common.py makes for the same reason), but 820 tracks the
-    # neighboring column's typical height closely.
+
     fig.update_layout(height=820)
     map_columns = st.columns([2, 2])
     with map_columns[0]:
         render_full_bleed_map(fig, _MAP_CHART_CARD_KEY)
-    # Experimental placement: the elbow/silhouette diagnostics chart sits
-    # directly beside the map instead of tucked behind the "How was the
-    # recommended k chosen?" expander (see collapsed=False in
-    # render_k_diagnostics_chart()'s docstring in src/views/common.py) --
-    # only in this Map View mode, to see how it reads before deciding
-    # whether to keep it. Scatter Plot's own call further down keeps the
-    # collapsed default.
     if diagnostics is not None:
         with map_columns[1]:
             render_k_diagnostics_chart(diagnostics, best_k, collapsed=False, card_key=_MAP_DIAGNOSTICS_CARD_KEY)

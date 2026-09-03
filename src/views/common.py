@@ -23,42 +23,29 @@ from src.dashboard_context import DashboardContext
 from src.data_loader import load_station_metadata
 from src.ui_theme import ACCENT_HEX_BY_CATEGORY, chart_card, render_chart, style_fig
 
-# Every chart-bearing view (Time Series, Map, Regression, Clustering)
-# shares this same chart/Key-Figures row split -- 72% chart, 28% Key
-# Figures box -- so the ratio lives here once rather than being repeated
-# (and drifting) per view.
+# Shared chart/Key-Figures row split across every chart-bearing view.
 CHART_ROW_WIDTH_RATIO = [0.72, 0.28]
 
 _PLAIN_MAP_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
 
 
 def pretty_name(parameter: str) -> str:
-    """"cloud_cover_total" -> "Cloud Cover Total". Composite keys that
-    don't read cleanly through this generic snake_case split (e.g.
-    "humidity_pressure_vapor") should instead set an explicit "label" in
-    their COMPOSITE_PARAMETER_GROUPS entry -- see _dropdown_label()."""
+    """"cloud_cover_total" -> "Cloud Cover Total". Composite keys needing a
+    custom label should set one in COMPOSITE_PARAMETER_GROUPS instead."""
     return " ".join(word.capitalize() for word in parameter.split("_"))
 
 
 def parameter_label_with_unit(parameter: str) -> str:
-    """"wind_speed" -> "Wind Speed (m/s)", falling back to the bare name for
-    a parameter with no known unit (see PARAMETER_UNITS in src/analysis.py)."""
+    """"wind_speed" -> "Wind Speed (m/s)", falling back to the bare name."""
     unit = PARAMETER_UNITS.get(parameter, "")
     return f"{pretty_name(parameter)} ({unit})" if unit else pretty_name(parameter)
 
 
 def render_cluster_profile(clustered: pd.DataFrame, feature_cols: list[str], value_labels: dict[str, str]) -> None:
-    """Per-cluster feature averages plus station counts -- shared by the
-    Clustering tab and the Map tab's cluster-coloring mode (src/views/
-    clustering.py, src/views/map_view.py) so both present the exact same
-    "what does this cluster actually mean" table. Without this, a cluster
-    is just an arbitrary number (0/1/2); this is what turns "Cluster 2"
-    into something readable, e.g. "warm and dry"."""
+    """Per-cluster feature averages plus station counts, shared by Clustering
+    and the Map tab's cluster-coloring mode."""
     render_section_label("Cluster profile", style="header")
-    # "Mean " prefixed onto every column header, not just implied by the
-    # section title -- these are each cluster's *average* on that
-    # parameter, not a single station's raw reading, and that distinction
-    # is easy to miss glancing at a bare parameter name in a table cell.
+    # Prefixed with "Mean " since these are cluster averages, not raw readings.
     mean_labels = {f: f"Mean {value_labels[f]}" for f in feature_cols}
     profile = clustered.groupby("cluster")[feature_cols].mean().rename(columns=mean_labels).round(1)
     profile.insert(0, "Stations", clustered.groupby("cluster").size())
@@ -85,14 +72,9 @@ _K_DIAGNOSTICS_EXPLANATION = (
 
 def _nice_axis_step(value_range: float, target_ticks: int = 5) -> float:
     """A "1-2-5-times-a-power-of-ten" tick step sized so roughly
-    ``target_ticks`` of them fit across ``value_range`` -- silhouette
-    score only ever spans a narrow band (bounded to [-1, 1], but real
-    values cluster far tighter than that), and Plotly's own auto tick
-    spacing is tuned for a full-width axis: it can land on a step wide
-    enough that only one or two multiples of it fall inside a range this
-    narrow, leaving the axis looking almost unlabeled. Computing the step
-    from the actual data range instead keeps it readable regardless of
-    how narrow that range turns out to be."""
+    ``target_ticks`` fit across ``value_range``. Plotly's own auto tick
+    spacing is tuned for a full-width axis, so it under-labels a narrow
+    range like silhouette score's."""
     if value_range <= 0:
         return 1.0
     rough_step = value_range / target_ticks
@@ -103,15 +85,10 @@ def _nice_axis_step(value_range: float, target_ticks: int = 5) -> float:
 
 
 def render_k_diagnostics_explanation() -> None:
-    """A permanent, always-visible explanation of how inertia and
-    silhouette score are each calculated -- its own bordered box (same
-    chart_card() "white box" skin as every other chart-bearing element in
-    the app), not a click/hover tooltip, so it doesn't require a
-    deliberate interaction to discover. Rendered as its own call, separate
-    from render_k_diagnostics_chart() below, so each caller can place it
-    wherever makes sense relative to their own k-slider (e.g. below it,
-    see the call sites in src/views/clustering.py) instead of it being
-    pinned to a fixed spot next to the chart."""
+    """Always-visible explanation of how inertia/silhouette score are
+    calculated, in its own chart_card() rather than a tooltip. Rendered
+    separately from render_k_diagnostics_chart() so callers can place it
+    wherever makes sense relative to their own k-slider."""
     with chart_card():
         render_section_label("What is Inertia and Silhouette Score?", style="header")
         st.markdown(_K_DIAGNOSTICS_EXPLANATION)
@@ -121,27 +98,10 @@ def render_k_diagnostics_chart(
     diagnostics: pd.DataFrame, best_k: int, collapsed: bool = True, card_key: str | None = None
 ) -> None:
     """Elbow (inertia) + silhouette score across k, backing a cluster-count
-    slider's recommended-k label -- shared by the Clustering tab and the
-    Map tab's cluster mode (see compute_k_diagnostics() in src/analysis.py
-    for how ``diagnostics``/``best_k`` are produced). Collapsed into an
-    expander by default since the slider's own label already states the
-    headline number and this is for whoever wants to see *why* -- pass
-    ``collapsed=False`` to render it in place instead (e.g. sitting next to
-    the map itself, where an expander's own click-to-open affordance would
-    be an extra step for a chart that's meant to be glanced at directly).
-
-    ``card_key``, only used when ``collapsed=False``, wraps the chart in
-    its own chart_card() with padding stripped (same scoped-CSS trick
-    render_full_bleed_map() uses) so it fills as much of that bordered box
-    as the figure's own axis-label margins allow, rather than sitting on
-    the plain page background.
-
-    The "Inertia and silhouette score by k" title renders as plain page
-    text above the chart rather than as the figure's own Plotly title --
-    a Plotly title sits inside the figure's own margin and gets clipped by
-    a zero-padding card (see ``card_key`` above). What the two metrics
-    actually mean lives in render_k_diagnostics_explanation() above, not
-    here -- call it separately wherever it should sit for a given caller."""
+    slider's recommended-k label. Collapsed into an expander by default;
+    pass ``collapsed=False`` to render in place instead (e.g. next to the
+    map). ``card_key`` (only used when not collapsed) wraps the chart in a
+    zero-padding chart_card()."""
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
         go.Scatter(x=diagnostics["k"], y=diagnostics["inertia"], mode="lines+markers", name="Inertia"),
@@ -157,20 +117,11 @@ def render_k_diagnostics_chart(
     fig.update_yaxes(
         title_text="Silhouette score", dtick=_nice_axis_step(silhouette_span), secondary_y=True
     )
-    # An explicit empty title, not just an omitted one -- style_fig() (via
-    # render_chart() below) unconditionally sets title_font_color on every
-    # figure it touches, and Plotly renders a literal "undefined" title
-    # placeholder if no title was ever set at all (same quirk noted on the
-    # other charts that go through style_fig()). The title itself now
-    # lives outside the chart entirely (see render_section_label() calls
-    # below).
+    # Explicit empty title: style_fig() sets title_font_color unconditionally,
+    # and Plotly renders a literal "undefined" placeholder with no title set.
     fig.update_layout(title="", height=280, margin=dict(t=20, b=10))
 
     def _render_caption() -> None:
-        # Two short, self-contained sentences rather than one long
-        # parenthetical-heavy paragraph (what "higher"/"lower" mean for
-        # each metric lives in render_k_diagnostics_explanation() instead,
-        # so this only needs to say what happened *this run*).
         st.caption(f"Silhouette score peaks at k={best_k}, which is why the slider above starts there.")
         st.caption('Inertia keeps falling as k grows, but flattens out around the same point (the classic "elbow").')
 
@@ -197,11 +148,8 @@ def render_k_diagnostics_chart(
 
 
 def _dropdown_label(value: str) -> str:
-    """Display text for one "Parameter" dropdown option. Composite keys
-    use their group's explicit "label" when present (see
-    COMPOSITE_PARAMETER_GROUPS in src/analysis.py); everything else
-    (real DWD parameters, and composites without a custom label) falls
-    back to pretty_name()."""
+    """Display text for one "Parameter" dropdown option. Composite keys use
+    their group's explicit "label" when present, else pretty_name()."""
     group = COMPOSITE_PARAMETER_GROUPS.get(value)
     if group and "label" in group:
         return group["label"]
@@ -237,37 +185,12 @@ def render_segmented_nav_css(
     margin_bottom: str = "1.5rem",
 ) -> None:
     """Bare, no-pill skin for one ``st.segmented_control()``: big bold text
-    spanning the full row across ``option_count`` equal columns, a shared
-    sliding underline indicator (one bar that slides between columns, not
-    one per-button), and a lift+color hover affordance on the inactive
-    options. Originally built one-off for the top-level Live Weather/
-    Weather Analysis switch in app.py; pulled out here so the "Weather
-    Analysis" sub-nav (Time Series/Map/Regression/Clustering/Discover
-    Global Warming) can share the exact same look instead of keeping its
-    default pill-button skin the top-level switch moved away from.
-
-    The two buttons in the original version were siblings inside one
-    wrapper <div> (stButtonGroup's own direct children are [label, that
-    div] -- confirmed by inspecting the live DOM), so the sliding
-    indicator lives on *that* div via ::after, not on stButtonGroup or any
-    one button -- one shared bar sliding across on `aria-checked`, not N
-    independent per-button underlines. A faint 1px rail runs the full
-    width under every option (visible under inactive ones too), with the
-    shorter, thicker, colored indicator layered on top of just the active
-    column.
-
-    The indicator keeps the original design's proportions (34% of a 50%
-    column, i.e. 68% of its own column's width, centered) rather than a
-    fixed absolute width, so it scales down sensibly as ``option_count``
-    grows and each column gets narrower -- one rule per column overrides
-    `left` for whichever button currently carries `aria-checked="true"`.
-
-    The scoped selectors below each add one extra ancestor attribute
-    selector versus the global stButtonGroup rules in _BASE_CSS, so they
-    out-specificity those rules (three attribute selectors vs. two)
-    without needing an "!important + later source order" trick -- this
-    one just wins outright.
-    """
+    spanning the full row, a shared sliding underline indicator (one bar
+    that slides between columns on `aria-checked`, not per-button), and a
+    lift+color hover affordance on inactive options. Indicator width is
+    68% of its own column, so it scales as ``option_count`` grows. Scoped
+    selectors here out-specificity the global stButtonGroup rules in
+    _BASE_CSS by one extra ancestor selector."""
     column_pct = 100 / option_count
     indicator_width_pct = 0.68 * column_pct
     offset_pct = (column_pct - indicator_width_pct) / 2
@@ -299,10 +222,7 @@ def render_segmented_nav_css(
         f"background: none !important; border: none !important; box-shadow: none !important; "
         f"backdrop-filter: none !important; -webkit-backdrop-filter: none !important; "
         f"border-radius: 0 !important; "
-        # The default button rule elsewhere in this file fixes height at
-        # 32px with overflow: hidden (sized for its 1rem font) -- at a
-        # bigger font-size that clips the text top and bottom. Letting the
-        # box size to its own content instead of that fixed height fixes it.
+        # Overrides the fixed 32px button height, which clips text at bigger font-sizes.
         f"height: auto !important; min-height: 0 !important; overflow: visible !important; "
         f"line-height: 1.25 !important; "
         f"flex: 1 1 {column_pct:.3f}% !important; justify-content: center !important; "
@@ -311,19 +231,12 @@ def render_segmented_nav_css(
         f"color: color-mix(in srgb, var(--m3-on-primary-container, #1E4469) 50%, transparent) !important; "
         f"transition: color 0.15s ease, transform 0.15s ease; "
         f"}}"
-        # Hover affordance on the unselected options only -- a small lift
-        # plus their full active-state color, so they visibly invite a
-        # click without touching the already-active option (which doesn't
-        # need one).
+        # Hover affordance on unselected options only.
         f'[class*="{key}"] [data-testid="stButtonGroup"] button:not([aria-checked="true"]):hover {{ '
         f"color: var(--m3-on-primary-container, #1E4469) !important; "
         f"transform: translateY(-3px); "
         f"}}"
-        # The button's text sits inside a [data-testid="stMarkdownContainer"]
-        # > <p> that carries its own fixed 14px rule elsewhere -- the
-        # existing "font-size: inherit" trick on button-p (see _BASE_CSS)
-        # inherits from that div, not from the button several levels up, so
-        # it never picks up the size above without this.
+        # Overrides the fixed 14px rule on the button's inner <p>.
         f'[class*="{key}"] [data-testid="stButtonGroup"] button p {{ '
         f"font-size: {font_size} !important; font-weight: 700 !important; line-height: 1.25 !important; "
         f"}}"
@@ -342,38 +255,16 @@ def render_key_figures_box(
     stats: dict[str, float | int | str | None] | None = None,
     chart_height: int = 450,
 ) -> None:
-    """Min/mean/max/mode/total for one parameter's filtered data, combined
-    into a single vertically-stacked box (one bordered card, one row per
-    stat) rather than five separate metric cards spanning the full row --
-    sized to sit in the narrow leftover column next to its own chart (see
-    CHART_ROW_WIDTH_RATIO above, and the ``render_key_figures`` callable
-    render_parameter_and_subset() returns below) instead of stretching
-    full-width above it.
+    """Min/mean/max/mode/total for one parameter's filtered data, as a single
+    vertically-stacked box sized to sit beside its chart.
 
-    ``chart_height`` should be whatever pixel height the chart sitting
-    next to this box was given (``fig.update_layout(height=...)``; 450 is
-    Plotly's own default when a caller never sets one, e.g. Map/
-    Regression/Clustering's charts) -- this box's own CSS height is set to
-    match it (plus chart_card()'s own padding/border) directly, in
-    pixels, rather than via a `height: 100%` percentage chain. The
-    percentage approach doesn't work here: a percentage height only
-    resolves against a parent with a *definite* (non-auto) height, and
-    Streamlit's own bordered-container wrapper is itself auto-sized to
-    its content, so `height: 100%` on it (or on anything inside it)
-    silently collapses back to "auto" per the CSS spec, regardless of how
-    tall the column around it has stretched. An explicit pixel height
-    sidesteps that chain entirely.
+    ``chart_height`` should match the chart's own height, this box's CSS
+    height is set to it directly in pixels rather than `height: 100%`,
+    since that collapses to "auto" against Streamlit's auto-sized wrapper.
 
-    ``stats``, when provided, is used as-is instead of being computed from
-    ``subset``/``parameter`` via compute_parameter_stats() -- this is how
-    a composite with its own stats function (e.g. compute_temperature_stats
-    in src/analysis.py) supplies numbers that don't all come from one
-    series. Unlike the old five-card layout, each row's label no longer
-    needs to repeat the parameter's own name (there's already one "Key
-    Figures:" header above the whole box), so this no longer takes a
-    ``display_label`` override either -- ``parameter`` only ever affects
-    the accent color lookup now.
-    """
+    ``stats``, when provided, is used as-is instead of computed from
+    ``subset``/``parameter``, lets a composite with its own stats function
+    (e.g. compute_temperature_stats) supply numbers from more than one series."""
     stats = stats if stats is not None else compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
     active_parameter = st.session_state.get("active_theme_parameter", parameter)
@@ -390,10 +281,6 @@ def render_key_figures_box(
     render_section_label("Key Figures:", style="header")
 
     card_key = f"{key_prefix}-key-figures"
-    # No per-row background (an alternating accent tint was tried and
-    # then explicitly reverted) -- every row reads the same: a muted
-    # default-ink label, an accent-colored bold value, both directly on
-    # the card's own plain background.
     rows = "".join(
         f'<div style="display:flex; justify-content:space-between; align-items:center; '
         f'gap:0.75rem; padding:0.7rem 0.15rem;'
@@ -405,15 +292,7 @@ def render_key_figures_box(
         f'</div>'
         for i, (stat_label, value) in enumerate(stat_defs)
     )
-    # An explicit pixel height, matched to the chart sitting next to this
-    # box (chart_height + chart_card()'s own ~24px top/bottom padding +
-    # ~1px border each side, see _BASE_CSS in src/ui_theme.py) -- not
-    # `height: 100%`. A percentage height only resolves against a parent
-    # with a *definite* (non-auto) height, and Streamlit's own bordered-
-    # container wrapper is itself auto-sized to its content, so
-    # `height: 100%` here silently collapses back to "auto" per the CSS
-    # spec regardless of how tall the column around it has stretched --
-    # this sidesteps that chain entirely by not depending on it.
+    # chart_height plus chart_card()'s own top/bottom padding+border.
     box_height = chart_height + 2 * 25
     st.markdown(
         f'<style>div[data-testid="stVerticalBlock"][class*="{card_key}"] {{ '
@@ -478,103 +357,37 @@ def render_parameter_and_subset(
     """Render a "Parameter" selectbox scoped to one view and filter ``raw`` to it.
     Returns ``(parameter, subset, effective_parameter, effective_subset, render_key_figures)``.
 
-    ``render_key_figures`` is a callable taking one optional ``chart_height``
-    argument (or ``None`` if ``show_stats=False``, or the composite is
-    "stats_parameters"-shaped -- see below) that renders the combined Key
-    Figures box (see render_key_figures_box()) when called -- it is *not*
-    rendered here. Callers are expected to call it themselves inside
-    whichever column should hold it, typically the narrow leftover column
-    next to this view's own chart (``chart_col, stats_col = st.columns(CHART_ROW_WIDTH_RATIO)``,
-    then ``with stats_col: render_key_figures(chart_height)`` once the chart
-    itself is known) rather than a full-width block above the chart --
-    this used to render inline, full-width, right here, before Key
-    Figures moved next to its chart instead of above it. Pass the same
-    pixel height the paired chart was given
-    (``fig.update_layout(height=...)``) so the box matches it -- see
-    render_key_figures_box()'s own docstring for why that's a plain
-    argument instead of something this function could work out on its own.
+    ``render_key_figures`` takes an optional ``chart_height`` and renders
+    the Key Figures box (render_key_figures_box()) -- not rendered here,
+    since callers place it next to their own chart once its height is known.
 
-    ``collapse_composites`` replaces each group's component parameters
-    (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py) with one grouped
-    dropdown entry. When a composite is selected, ``parameter`` is that
-    composite's synthetic key and ``subset`` contains every one of its
-    components' rows; what ``render_key_figures`` is set to depends on
-    which shape the group uses:
+    ``collapse_composites`` replaces each group's component parameters (see
+    COMPOSITE_PARAMETER_GROUPS) with one grouped dropdown entry. When a
+    composite is selected, what ``render_key_figures`` does depends on the
+    group's shape: "stats_fn" renders one merged box via the group's own
+    stats function; "stats_parameters" is left ``None`` since the caller
+    must render one box per component itself; otherwise it's one box off
+    the group's "primary" parameter.
 
-      - "stats_fn": one merged box, via the group's own function
-        (currently just "Temperature", via compute_temperature_stats()).
-      - "stats_parameters": left ``None`` -- the caller is expected to call
-        render_key_figures_box() itself, once per component, since a
-        fixed single box doesn't fit every composite's presentation (e.g.
-        Humidity and Pressure Vapor wants each component's own box sitting
-        next to its own chart, not one merged box for both).
-      - neither (just "primary"): the default -- one box off that single
-        parameter, labeled with the composite's own name.
+    ``effective_parameter``/``effective_subset`` reduce a composite down to
+    one real DWD parameter, for callers needing a single series (Regression's
+    trend fit, Map/Clustering's per-station mean). For "Temperature" that's
+    whichever of mean/max/min the shared Mean/Max/Min toggle has selected;
+    other composites use their "primary" (or first component, if none).
 
-    ``effective_parameter``/``effective_subset`` are what every caller
-    that needs to reduce a selection down to *one real DWD parameter* for
-    its own single-series computation (Regression's trend fit, Map's
-    per-station mean, Clustering's per-station mean) should use instead of
-    ``parameter``/``subset``: for a non-composite selection they're
-    identical to ``parameter``/``subset``; for the "Temperature" composite,
-    ``effective_parameter`` is whichever of mean/max/min 2m air temperature
-    the Mean/Max/Min toggle this function renders (see
-    _render_temperature_trend_toggle() above) currently has selected --
-    that toggle is shared across every view the same way the "Parameter"
-    dropdown itself is, so picking "Max" in Regression and switching to
-    Map keeps showing max temperature there too. Every other composite has
-    no toggle, so it's always that group's "primary" parameter (falling
-    back to its first component for a "stats_parameters"-shaped group like
-    Humidity and Pressure Vapor, which has no single obvious "primary" --
-    see the effective_parameter assignment below) -- e.g. Precipitation's
-    other component, precipitation_form, is a category code, not a
-    continuous quantity, so there's no meaningful single number to reduce
-    it to outside Time Series' own dedicated monthly-breakdown chart. Only
-    Time Series itself needs the full ``parameter``/``subset`` -- its
-    composite views render every component at once rather than reducing
-    to one.
+    Every view calling this shares one selection via
+    st.session_state[_SHARED_PARAMETER_KEY], always a real DWD parameter
+    (never a composite key). Composite-aware callers translate it to
+    whichever composite currently contains it before offering it as this
+    dropdown's value, and translate back when writing a new selection.
 
-    Every view calling this shares one selection: picking "Temperature" in
-    Time Series and switching to Map, Regression, or Clustering shows that
-    same choice there too, and vice versa. This works by keeping one
-    canonical value in st.session_state[_SHARED_PARAMETER_KEY] that's
-    always a real DWD parameter (never a composite key, since only Time
-    Series' own dropdown ever offers composites -- app.py only ever runs
-    one view's render() per script pass, see its own module docstring, so
-    there's no risk of two of these calls fighting over it in the same
-    run). Composite-aware callers translate the canonical value to
-    whichever composite currently contains it (via
-    _composite_key_for_parameter()) before offering it as this dropdown's
-    current value; non-composite callers use it directly, since their
-    options are always real parameters and so is the canonical value.
-    Whichever direction a change came from, this dropdown's own resulting
-    ``parameter`` is translated back the same way (a composite's own
-    "primary" component standing in for the composite itself) and written
-    back to the canonical value, so the next view to render picks it up.
-
-    The re-seeding below (``if key not in st.session_state``) only fires
-    when THIS widget's own persisted value is missing -- never when it's
-    merely stale, which matters because Streamlit quietly drops a widget's
-    session_state entry once it goes unrendered for a few reruns (verified
-    empirically: a plain, non-widget session_state entry survives any
-    number of reruns without being touched, but a `key=`-bound one gets
-    wiped back to its default after ~4-5 reruns where its own
-    st.selectbox() call never executes -- exactly what happens to every
-    OTHER view's "parameter_*" key while the user sits on one view for a
-    while). That's what _SHARED_PARAMETER_KEY is *for*: unlike the widget
-    keys, it's a plain dict entry Streamlit never garbage-collects, so it
-    survives to re-seed whichever widget key got wiped meanwhile -- e.g.
-    switching Time Series -> Map -> Regression -> Clustering -> Global
-    Warming -> back to Time Series used to reset Time Series' own dropdown
-    to its default, because by then Streamlit had already dropped
-    "parameter_series" from session_state; re-seeding only when the key is
-    truly absent (rather than whenever it merely differs from the last
-    value this call saw, which the previous version of this function did)
-    fixes that without also clobbering a value the user just picked in
-    THIS dropdown this run -- when that happens, Streamlit has already
-    written the new value into st.session_state[key] before this function
-    is even called, so the key is never "missing" in that case.
-    """
+    The re-seed below only fires when this widget's own persisted value is
+    missing, not merely stale -- Streamlit drops a `key=`-bound value after
+    a few reruns where its widget doesn't execute (e.g. switching through
+    every other view and back). _SHARED_PARAMETER_KEY is a plain dict entry
+    that survives that, so it can re-seed the widget when needed, without
+    clobbering a value the user just picked this run (in which case
+    Streamlit already wrote it, so the key isn't "missing")."""
     render_section_label("Parameter")
 
     available_parameters = set(raw["parameter"].unique())
@@ -609,15 +422,6 @@ def render_parameter_and_subset(
         canonical_parameter = parameter
     st.session_state[_SHARED_PARAMETER_KEY] = canonical_parameter
 
-    # Unconditional, not "only when parameter changed since this view's own
-    # last render": app.py only ever runs one view's render() per script
-    # pass (see its module docstring), so a change-only update left this
-    # stale whenever a *different* view ran in between and overwrote
-    # "active_theme_parameter" itself (Live Weather does this every render,
-    # via its own current conditions -- see live_weather.py) -- switching
-    # back to this view without touching its dropdown then kept whatever
-    # theme that other view last set, instead of reasserting this view's
-    # own current parameter's theme.
     st.session_state["active_theme_parameter"] = parameter
 
     render_key_figures = None
@@ -639,10 +443,7 @@ def render_parameter_and_subset(
             trend_label = _render_temperature_trend_toggle()
             effective_parameter = TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label]
         else:
-            # Not every composite has a "primary" -- a "stats_parameters"
-            # group like Humidity and Pressure Vapor has two co-equal
-            # components instead of one designated representative, so
-            # fall back to the first of them.
+            # No "primary" for a "stats_parameters" group -- fall back to its first component.
             effective_parameter = group.get("primary", group["components"][0])
     else:
         subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
@@ -666,43 +467,16 @@ def _station_missing_reason(
     component_parameters: list[str] | None = None,
 ) -> str:
     """Explain why ``station_id`` has zero valid rows for ``parameter`` in
-    ``raw`` over [start_date, end_date].
+    ``raw`` over [start_date, end_date]. Three causes, checked in order:
+    (1) the station's reporting window doesn't overlap the date range at
+    all, (2) it overlaps but ``raw`` has no rows for this parameter (the
+    station doesn't measure it), (3) rows exist but every ``value`` is NaN
+    (a genuine data gap).
 
-    Three distinguishable causes, checked in order of how conclusive the
-    evidence is:
-
-    1. The station's own reporting window (from DWD's per-station metadata,
-       independent of ``parameter``) doesn't overlap the selected date
-       range at all -- it was installed after / decommissioned before the
-       range, so no dataset for it could have anything here regardless of
-       parameter.
-    2. The station's window does overlap, but ``raw`` has no rows at all
-       for this station+parameter combination -- wetterdienst never
-       returned any, which for climate_summary means the station's
-       equipment doesn't measure this parameter.
-    3. Rows exist for this station+parameter, but ``value`` was NaN for
-       every one of them in this range -- a genuine data gap rather than
-       an unsupported parameter.
-
-    ``parameter`` may be a composite key (e.g. "temperature") rather than
-    a real DWD parameter -- COMPOSITE_PARAMETER_GROUPS[parameter] never
-    appears as a value in ``raw["parameter"]`` itself (see
-    render_parameter_and_subset()'s docstring), so cause 2/3 above default
-    to checking every one of that composite's *components* instead: a
-    station only "does not report" the composite if it has zero rows for
-    all of them, and only has a "data gap" if it has rows for at least one
-    component but none with a valid value.
-
-    ``component_parameters``, when given, overrides that default and
-    checks against exactly this list instead -- for a caller checking one
-    specific chart drawn from only *some* of a composite's components
-    (e.g. Time Series' Precipitation-height chart, drawn from just
-    "precipitation_height" even though the "precipitation" composite also
-    covers "precipitation_form" and "snow_depth"), the composite-wide
-    default would wrongly call a station "present" off a component that
-    chart never plots at all. See find_stations_missing_data()'s own
-    docstring for why this matters.
-    """
+    ``parameter`` may be a composite key -- causes 2/3 then check across
+    all of that composite's components. ``component_parameters`` overrides
+    that with an exact list instead, for a caller whose chart only draws
+    from *some* of a composite's components (see find_stations_missing_data())."""
     if station_id in metadata.index:
         station_start = metadata.loc[station_id, "start_date"]
         station_end = metadata.loc[station_id, "end_date"]
@@ -742,33 +516,16 @@ def find_stations_missing_data(
     end_date: dt.date,
     component_parameters: list[str] | None = None,
 ) -> list[dict[str, str]]:
-    """Diff the stations selected in the station-picker row against the
-    ones actually present in ``subset``, and explain each gap.
+    """Diff the stations selected in the station-picker row against the ones
+    actually present in ``subset``, and explain each gap -- charts silently
+    drop a station with zero rows, so this is the shared notice each view
+    renders before its chart.
 
-    Every chart-producing view (time series, map, clustering; regression
-    via missing_station_reason() above) aggregates ``subset`` in a way that
-    just silently omits a station with zero rows -- a px.line color group,
-    a groupby, an inner merge -- with nothing to tell the user that station
-    was ever selected. This is the shared "what got dropped and why" check
-    each view renders as a notice before its chart.
-
-    ``subset`` must already be filtered to exactly the parameter(s) the
-    caller's own chart actually draws from, and ``component_parameters``
-    (passed straight through to _station_missing_reason() -- see its own
-    docstring) must describe that same set whenever it differs from
-    ``parameter``'s default full-composite meaning. Passing a wider
-    ``subset`` than what's actually plotted silently breaks this check: a
-    station present only via some *other* component of the same composite
-    reads as "present" here even though it has zero rows for whatever this
-    caller is actually about to chart -- confirmed as a real bug in Time
-    Series' per-component composite charts (Precipitation's height/form/
-    snow-depth, Temperature's 2m-band/ground-frost, Wind's speed/gust,
-    Humidity's humidity/pressure-vapor), each of which used to receive the
-    composite-wide union subset and key instead of its own single
-    component's -- see src/views/time_series.py for how each chart now
-    computes its own correctly-scoped missing list instead of sharing one
-    computed against the whole composite.
-    """
+    ``subset`` must already be filtered to exactly what the caller's chart
+    draws from, and ``component_parameters`` must match whenever it differs
+    from ``parameter``'s full-composite default -- a wider ``subset`` makes
+    a station read as "present" via some other component it actually has
+    no rows for."""
     selected_ids = [ctx.id_by_name[name] for name in ctx.selected_names]
     present_ids = set(subset["station_id"].unique())
     missing_ids = [sid for sid in selected_ids if sid not in present_ids]
@@ -789,13 +546,9 @@ def find_stations_missing_data(
 
 
 def merge_missing_stations(*missing_lists: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Combine several find_stations_missing_data() results (e.g. one per
-    component chart under a composite -- see its own docstring) into one
-    list for a single render_missing_stations_notice() banner, without
-    duplicate ``(station_id, reason)`` bullets. A station can legitimately
-    appear more than once with *different* reasons (missing one component
-    entirely but only has a data gap in another), so this only collapses
-    exact repeats, not every entry for the same station."""
+    """Combine several find_stations_missing_data() results into one list
+    for a single banner, deduping exact ``(station_id, reason)`` repeats
+    (a station can legitimately appear twice with different reasons)."""
     seen: set[tuple[str, str]] = set()
     merged: list[dict[str, str]] = []
     for missing in missing_lists:
@@ -813,47 +566,12 @@ def render_missing_stations_indicator(missing: list[dict[str, str]], anchor_id: 
     the x-axis title in Clustering -- px.bar's own `labels={"station_name":
     "Station", ...}` makes that literally the same word) when
     find_stations_missing_data() found selected stations that aren't
-    plotted. Renders nothing (but still cleans up a previous run's icon --
-    see below) if ``missing`` is empty.
+    plotted. Renders nothing if ``missing`` is empty (but still removes a
+    previous run's icon, since nothing else will).
 
     Must be called from *inside* the same ``with chart_card(key=card_key):``
-    block it's meant to overlay -- ``card_key`` is the key that same
-    chart_card() call was given, used to find that one bordered container
-    in the DOM. st.container's own `key=` becomes an "st-key-{key}" class
-    on its wrapper div; ``[class*=...]`` substring-matches that regardless
-    of the exact prefix, same trick render_key_figures_box() uses.
-
-    This used to position the icon with a fixed top/right CSS offset,
-    measured once via getBoundingClientRect() against a live chart and
-    hardcoded from there. That measurement turned out not to generalize:
-    checked directly, the exact same 2-station legend rendered "Station"
-    8px lower when a station had genuinely been filtered out of the chart
-    (the real bug-report scenario) than when every selected station was
-    present and an icon was only added for testing -- Plotly's own legend
-    layout isn't as fixed as it looked from a handful of samples. Rather
-    than chase more fixed numbers that would just as likely break under
-    some other combination of station count / chart type / window width,
-    this measures the real "Station" text's position live in the browser
-    on every run and positions the icon from that, via components.html()
-    -- unlike st.markdown(unsafe_allow_html=True), whose injected
-    <script> tags never execute (confirmed directly: React's innerHTML-
-    style insertion leaves them inert, same as plain DOM innerHTML does),
-    an iframe built by components.html() does run its own scripts, and
-    (same-origin, unsandboxed against the parent by default) can reach
-    ``window.parent.document`` to measure and manipulate the real page
-    rather than its own throwaway iframe document.
-
-    The icon element itself is created once and left in the parent
-    document keyed by ``card_key`` (not recreated by Streamlit's own
-    component reconciliation the way the rest of a rerun's elements are),
-    so a rerun where ``missing`` has become empty has to explicitly remove
-    it itself -- nothing else will.
-
-    Purely a pointer, not the explanation itself: hovering shows a one-line
-    summary (native browser tooltip via the `title` attribute), and
-    clicking jumps to the full per-station breakdown that
-    render_missing_stations_notice() renders below the chart -- the two
-    share ``anchor_id`` so the link lands exactly on that notice."""
+    block it's meant to overlay -- ``card_key`` locates that container via
+    the "st-key-{key}" class Streamlit adds to it."""
     icon_id = f"missing-station-icon-{card_key}"
     if not missing:
         components.html(
@@ -903,12 +621,7 @@ def render_missing_stations_indicator(missing: list[dict[str, str]], anchor_id: 
                 }}
                 icon.href = '#' + cfg.anchorId;
                 icon.title = cfg.tooltip;
-                // A few px clear of the text's own right edge, vertically
-                // matched to where that text actually sits this run --
-                // both measured live rather than guessed, since neither
-                // reliably stays put across chart types, station counts,
-                // or which stations happen to be missing (see this
-                // function's own docstring).
+                // Measured live -- position isn't fixed across chart types/station counts.
                 icon.style.top = (titleRect.top - cardRect.top) + 'px';
                 icon.style.left = (titleRect.right - cardRect.left + 6) + 'px';
                 return true;
@@ -933,22 +646,13 @@ def render_full_bleed_map(
     fig, card_key: str, missing: list[dict[str, str]] | None = None, anchor_id: str | None = None
 ) -> None:
     """Render a scatter_map figure edge-to-edge inside its own chart_card(),
-    with no title or legend baked into the plot itself -- style_fig() first
-    (keeps theme-aware colors/modebar), then zero every margin, since a
-    Plotly figure's own default margins would otherwise leave a band of
-    plain card-background around the map, reading as a second, inner box
-    nested inside chart_card()'s own. The card's default padding is
-    stripped via a scoped CSS rule on this card's own key. Shared by the
-    Map tab's value-mode map and the Clustering tab's map-view mode (see
-    src/views/map_view.py, src/views/clustering.py) since both need the
-    exact same treatment.
+    zeroing every margin so the map fills the card instead of leaving a
+    band of card-background around it. Shared by Map's value-mode map and
+    Clustering's map-view mode.
 
-    ``missing``/``anchor_id``, when given, render the same missing-stations
-    warning icon the other chart-bearing tabs use -- must happen from
-    *inside* this card's own ``with chart_card():`` block to position
-    correctly (see render_missing_stations_indicator()'s docstring above),
-    which is why it's threaded through here rather than left to the caller.
-    """
+    ``missing``/``anchor_id``, when given, render the missing-stations
+    warning icon, threaded through here since it must be called from
+    inside this card's own ``with chart_card():`` block to position correctly."""
     style_fig(fig)
     fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
     st.markdown(
