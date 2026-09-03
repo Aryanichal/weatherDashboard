@@ -1,6 +1,6 @@
-"""Global Warming Trend tab: temperature anomaly, hot days/nights, and heavy-rain
-indicators for the selected cities, all driven by user-adjustable settings
-rather than fixed years/thresholds."""
+"""Discover Global Warming tab: "Global Warming Trend" (user-adjustable
+settings) and "Future Prediction" (model forecasts, independent of the
+trend tab's settings)."""
 
 import calendar
 import datetime as dt
@@ -8,24 +8,29 @@ import datetime as dt
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
+from src.ui_theme import chart_card, render_chart
 from src.dashboard_context import DashboardContext
+
 from src.data_loader import (
     ANOMALY_BASELINE_END_YEAR,
     ANOMALY_BASELINE_START_YEAR,
     TREND_START_YEAR,
+    WeatherDataFetchError,
     load_climate_change_indicators,
     load_hot_days_data,
     load_long_run_data,
     load_station_metadata,
 )
+
 from src.forecasting import (
     FORECAST_CACHE_VERSION,
     HOT_DAYS_INDICATOR,
     JULY_TEMPERATURE_INDICATOR,
     PYTORCH_MODEL_NAME,
+    RAINY_DAYS_INDICATOR,
     load_forecasts,
 )
+
 
 
 def _warn_about_missing_coverage(
@@ -36,10 +41,8 @@ def _warn_about_missing_coverage(
 ) -> None:
     """Warn per city about any chart that will render empty for it.
 
-    Some DWD stations only report a subset of parameters (e.g. wind-only
-    airfield stations), so a selected station can lack temperature or
-    precipitation data entirely. Without this, those charts just render
-    blank with no explanation -- indistinguishable from a bug.
+    Some DWD stations only report a subset of parameters, so a chart can
+    otherwise render blank with no explanation.
     """
     for city in city_stations:
         missing: list[str] = []
@@ -79,6 +82,9 @@ def _render_future_forecast(
     city_history = history.loc[(history["city"] == city) & (history["indicator"] == indicator)]
     city_forecasts = forecasts.loc[(forecasts["city"] == city) & (forecasts["indicator"] == indicator)]
     city_metrics = metrics.loc[(metrics["city"] == city) & (metrics["indicator"] == indicator)].copy()
+    if city_history.empty or city_forecasts.empty or city_metrics.empty:
+        st.info(f"No forecast data is currently available for {indicator.lower()} in {city}.")
+        return
     forecast_fig = px.line(
         city_history,
         x="year",
@@ -106,29 +112,36 @@ def _render_future_forecast(
             x=model_data["year"], y=model_data["predicted_value"], mode="lines+markers",
             line={"color": colour, "dash": "dash"}, name=f"{model_name} forecast", legendgroup=model_name,
         )
-    st.plotly_chart(forecast_fig, width="stretch")
+    with chart_card():
+        render_chart(forecast_fig)
 
     unit = city_metrics["unit"].iloc[0]
     city_metrics[f"MAE ({unit})"] = city_metrics["mae"].map("{:.2f}".format)
     city_metrics[f"RMSE ({unit})"] = city_metrics["rmse"].map("{:.2f}".format)
-    st.dataframe(
-        city_metrics[["model", "test_start_year", "test_end_year", f"MAE ({unit})", f"RMSE ({unit})"]].rename(
-            columns={"model": "Model", "test_start_year": "Test start", "test_end_year": "Test end"}
-        ),
-        hide_index=True,
-        width="stretch",
-    )
+    with chart_card():
+        st.dataframe(
+            city_metrics[["model", "test_start_year", "test_end_year", f"MAE ({unit})", f"RMSE ({unit})"]].rename(
+                columns={"model": "Model", "test_start_year": "Test start", "test_end_year": "Test end"}
+            ),
+            hide_index=True,
+            width="stretch",
+        )
 
 
 def render(ctx: DashboardContext) -> None:
+    trend_tab, prediction_tab = st.tabs(["Global Warming Trend", "Future Prediction"])
+    with trend_tab:
+        _render_trend_tab(ctx)
+    with prediction_tab:
+        _render_prediction_tab()
+
+
+def _render_trend_tab(ctx: DashboardContext) -> None:
     city_stations = {name: ctx.id_by_name[name] for name in ctx.selected_names}
     current_year = dt.date.today().year
 
-    # Each station's own period of record differs (e.g. München-Stadt only
-    # starts mid-1954), so bound the year controls by what's actually
-    # available for every currently selected station -- a baseline period
-    # that predates a station silently drops that city's anomaly (NaN),
-    # which looks like a data bug rather than an invalid setting.
+    # Bound year controls by the latest start date among selected stations;
+    # an earlier baseline silently drops that city's anomaly as NaN.
     station_metadata = load_station_metadata(list(city_stations.values()))
     earliest_common_year = pd.to_datetime(station_metadata["start_date"]).dt.year.max()
     min_selectable_year = int(earliest_common_year) if pd.notna(earliest_common_year) else TREND_START_YEAR
@@ -169,16 +182,20 @@ def render(ctx: DashboardContext) -> None:
         gw_hot_night_threshold = st.number_input("Hot night threshold (°C)", value=20.0, step=1.0)
         gw_heavy_rain_threshold = st.number_input("Heavy-rain threshold (mm)", value=20.0, step=1.0)
 
-    climate_indicators = load_climate_change_indicators(
-        city_stations,
-        gw_start_year,
-        gw_baseline_start_year,
-        gw_baseline_end_year,
-        gw_hot_night_threshold,
-        gw_heavy_rain_threshold,
-    )
-    long_run_data = load_long_run_data(city_stations, gw_start_year, gw_month)
-    hot_days_data = load_hot_days_data(city_stations, gw_start_year, gw_hot_day_threshold)
+    try:
+        climate_indicators = load_climate_change_indicators(
+            city_stations,
+            gw_start_year,
+            gw_baseline_start_year,
+            gw_baseline_end_year,
+            gw_hot_night_threshold,
+            gw_heavy_rain_threshold,
+        )
+        long_run_data = load_long_run_data(city_stations, gw_start_year, gw_month)
+        hot_days_data = load_hot_days_data(city_stations, gw_start_year, gw_hot_day_threshold)
+    except WeatherDataFetchError as exc:
+        st.error(f"Couldn't load weather data: {exc}")
+        return
     _warn_about_missing_coverage(city_stations, climate_indicators, long_run_data, hot_days_data)
 
     month_name = calendar.month_name[gw_month]
@@ -221,11 +238,12 @@ def render(ctx: DashboardContext) -> None:
             },
             title="Global Warming Trend",
         )
-        st.plotly_chart(anomaly_fig, width="stretch")
-        st.caption(
-            f"Anomalies are relative to each city's {gw_baseline_start_year}–{gw_baseline_end_year} "
-            f"annual-mean-temperature baseline; {current_year} values are year-to-date."
-        )
+        with chart_card():
+            render_chart(anomaly_fig)
+            st.caption(
+                f"Anomalies are relative to each city's {gw_baseline_start_year}–{gw_baseline_end_year} "
+                f"annual-mean-temperature baseline; {current_year} values are year-to-date."
+            )
 
     hot_nights_col, heavy_rain_col = st.columns(2)
     with hot_nights_col:
@@ -244,8 +262,9 @@ def render(ctx: DashboardContext) -> None:
                     "city": "City",
                 },
                 title="Hot Nights",
-            )
-            st.plotly_chart(hot_nights_fig, width="stretch")
+                )
+            with chart_card():
+                render_chart(hot_nights_fig)
     with heavy_rain_col:
         if heavy_rain_missing:
             st.info("No precipitation data is available for any selected station.")
@@ -262,8 +281,9 @@ def render(ctx: DashboardContext) -> None:
                     "city": "City",
                 },
                 title="Heavy-Rain Days",
-            )
-            st.plotly_chart(heavy_rain_fig, width="stretch")
+                )
+            with chart_card():
+                render_chart(heavy_rain_fig)
 
     if long_run_missing:
         st.info(f"No {month_name} temperature data is available for any selected station.")
@@ -277,7 +297,8 @@ def render(ctx: DashboardContext) -> None:
             labels={"year": "Year", "observed_temp": f"Average {month_name} temperature (°C)", "city": "City"},
             title=f"Average {month_name} Temperature",
         )
-        st.plotly_chart(temperature_fig, width="stretch")
+        with chart_card():
+            render_chart(temperature_fig)
 
     if hot_days_missing:
         st.info("No daytime maximum temperature data is available for any selected station.")
@@ -295,18 +316,19 @@ def render(ctx: DashboardContext) -> None:
             },
             title=f"Hot Days Above {gw_hot_day_threshold:g} °C",
         )
-        st.plotly_chart(hot_days_fig, width="stretch")
-        st.caption("The current year's hot-day count is year-to-date.")
+        with chart_card():
+            render_chart(hot_days_fig)
+            st.caption("The current year's hot-day count is year-to-date.")
 
-    st.divider()
-    st.subheader("Global Warming Future Trend Prediction")
+
+def _render_prediction_tab() -> None:
     st.caption(
-        "Both models forecast annual hot-day counts and average July temperatures, rather than the weather in a specific year. "
+        "The models forecast annual hot-day counts, average July temperatures, and rainy-day counts rather than the weather in a specific year. "
         "The partial current year is excluded from model fitting."
     )
     try:
         forecasts, forecast_metrics, forecast_history = load_forecasts(FORECAST_CACHE_VERSION)
-    except (ValueError, KeyError) as error:
+    except (ValueError, KeyError, WeatherDataFetchError) as error:
         st.error(f"Unable to prepare the future-trend forecast: {error}")
         return
 
@@ -323,4 +345,9 @@ def render(ctx: DashboardContext) -> None:
     _render_future_forecast(
         forecast_city, JULY_TEMPERATURE_INDICATOR, "Average July temperature (°C)",
         f"{forecast_city}: Average July Temperature Forecast", forecasts, forecast_metrics, forecast_history,
+    )
+    st.subheader("Rainy Days Future Prediction")
+    _render_future_forecast(
+        forecast_city, RAINY_DAYS_INDICATOR, "Rainy days above 1 mm",
+        f"{forecast_city}: Rainy Days Above 1 mm Forecast", forecasts, forecast_metrics, forecast_history,
     )
