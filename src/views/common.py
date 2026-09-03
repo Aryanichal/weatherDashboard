@@ -248,12 +248,57 @@ def render_segmented_nav_css(
     )
 
 
+def _render_header_with_info(text: str, tooltip: str, wrap_class: str) -> None:
+    """Section-label header with a small hover/click info icon after it,
+    same click-opens-and-stays-open pattern as Live Weather's Location
+    tooltip (see src/views/live_weather.py) -- a focusable <span> shown via
+    :hover *or* :focus, so a click opens it and keeps it open until
+    something else is clicked. ``wrap_class`` scopes the CSS so more than
+    one of these can render on the same page without colliding.
+
+    Opens to the icon's right."""
+    st.markdown(
+        f'<style>'
+        f'.{wrap_class} {{ isolation: isolate; }}'
+        f'.{wrap_class} .info-icon {{ position: relative; }}'
+        f'.{wrap_class} .info-tooltip {{ '
+        f"display: none; position: absolute; top: 50%; left: calc(100% + 8px); right: auto; "
+        f"transform: translateY(-50%); z-index: 9999; "
+        f"width: 240px; padding: 0.55rem 0.7rem; border-radius: 10px; "
+        f"font-size: 12.5px; font-weight: 400; line-height: 1.4; letter-spacing: normal; "
+        f"color: var(--m3-on-primary-container, #1E4469); "
+        f"background: color-mix(in srgb, white 92%, var(--m3-surface-container-low, #D8E2EC) 8%); "
+        f"border: 1px solid rgba(255, 255, 255, 0.6); box-shadow: 0 8px 20px rgba(28, 42, 59, 0.18); "
+        f"}}"
+        f'.{wrap_class}:hover .info-tooltip, '
+        f'.{wrap_class} .info-icon:focus .info-tooltip, '
+        f'.{wrap_class}:focus-within .info-tooltip {{ display: block; }}'
+        f"</style>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<p class="{wrap_class}" style="font-size:20px;font-weight:600;letter-spacing:0.1px;'
+        f'color:var(--m3-on-primary-container, #1E4469);'
+        f'margin:0 0 0.5rem 0; display:flex; align-items:center; gap:0.35rem;">{text}'
+        f'<span class="info-icon" tabindex="0" style="'
+        f'display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; '
+        f'border-radius:50%; font-size:11px; font-weight:700; line-height:1; '
+        f'cursor:pointer; opacity:0.55; outline:none; '
+        f'border:1.3px solid var(--m3-on-primary-container, #1E4469);">i'
+        f'<span class="info-tooltip">{tooltip}</span>'
+        f'</span>'
+        f'</p>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_key_figures_box(
     subset: pd.DataFrame,
     parameter: str,
     key_prefix: str,
     stats: dict[str, float | int | str | None] | None = None,
     chart_height: int = 450,
+    note: str | None = None,
 ) -> None:
     """Min/mean/max/mode/total for one parameter's filtered data, as a single
     vertically-stacked box sized to sit beside its chart.
@@ -264,7 +309,12 @@ def render_key_figures_box(
 
     ``stats``, when provided, is used as-is instead of computed from
     ``subset``/``parameter``, lets a composite with its own stats function
-    (e.g. compute_temperature_stats) supply numbers from more than one series."""
+    (e.g. compute_temperature_stats) supply numbers from more than one series.
+
+    ``note``, when given, renders as a hover/click info icon next to the
+    "Key Figures:" header instead of a plain label -- for a composite like
+    Temperature whose figures always cover the full min-to-max range and
+    don't track its own Mean/Max/Min trend-line toggle."""
     stats = stats if stats is not None else compute_parameter_stats(subset, parameter)
     unit = stats["unit"]
     active_parameter = st.session_state.get("active_theme_parameter", parameter)
@@ -278,9 +328,11 @@ def render_key_figures_box(
         (stats["total_label"], _format_total(stats["total"], stats["total_unit"])),
     ]
 
-    render_section_label("Key Figures:", style="header")
-
     card_key = f"{key_prefix}-key-figures"
+    if note:
+        _render_header_with_info("Key Figures:", note, wrap_class=f"{card_key}-info-wrap")
+    else:
+        render_section_label("Key Figures:", style="header")
     rows = "".join(
         f'<div style="display:flex; justify-content:space-between; align-items:center; '
         f'gap:0.75rem; padding:0.7rem 0.15rem;'
@@ -360,6 +412,10 @@ def render_parameter_and_subset(
     ``render_key_figures`` takes an optional ``chart_height`` and renders
     the Key Figures box (render_key_figures_box()) -- not rendered here,
     since callers place it next to their own chart once its height is known.
+    Also carries a ``.stats`` attribute (the same min/mean/max/mode dict it
+    renders) when ``show_stats`` is true and the composite shape isn't
+    "stats_parameters", so a caller's own chart (e.g. Map's color scale) can
+    match Key Figures' numbers exactly instead of computing its own.
 
     ``collapse_composites`` replaces each group's component parameters (see
     COMPOSITE_PARAMETER_GROUPS) with one grouped dropdown entry. When a
@@ -431,14 +487,20 @@ def render_parameter_and_subset(
         if show_stats and "stats_parameters" not in group:
             if "stats_fn" in group:
                 stats = group["stats_fn"](subset)
+                note = group.get("stats_note")
                 render_key_figures = lambda chart_height=450: render_key_figures_box(
-                    subset, group["primary"], key_prefix=key, stats=stats, chart_height=chart_height
+                    subset, group["primary"], key_prefix=key, stats=stats, chart_height=chart_height, note=note
                 )
             else:
                 stats_subset = raw[raw["parameter"] == group["primary"]].dropna(subset=["value"])
+                stats = compute_parameter_stats(stats_subset, group["primary"])
                 render_key_figures = lambda chart_height=450: render_key_figures_box(
-                    stats_subset, group["primary"], key_prefix=key, chart_height=chart_height
+                    stats_subset, group["primary"], key_prefix=key, stats=stats, chart_height=chart_height
                 )
+            # Exposed so callers whose own chart (e.g. Map's color scale) needs
+            # to match Key Figures' exact min/max can read it without a second,
+            # possibly diverging computation.
+            render_key_figures.stats = stats
         if parameter == TEMPERATURE_COMPOSITE_KEY:
             trend_label = _render_temperature_trend_toggle()
             effective_parameter = TEMPERATURE_TREND_PARAMETER_BY_LABEL[trend_label]
@@ -448,9 +510,11 @@ def render_parameter_and_subset(
     else:
         subset = raw[raw["parameter"] == parameter].dropna(subset=["value"])
         if show_stats:
+            stats = compute_parameter_stats(subset, parameter)
             render_key_figures = lambda chart_height=450: render_key_figures_box(
-                subset, parameter, key_prefix=key, chart_height=chart_height
+                subset, parameter, key_prefix=key, stats=stats, chart_height=chart_height
             )
+            render_key_figures.stats = stats
         effective_parameter = parameter
 
     effective_subset = raw[raw["parameter"] == effective_parameter].dropna(subset=["value"])

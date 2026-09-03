@@ -314,6 +314,13 @@ COMPOSITE_PARAMETER_GROUPS = {
         "components": TEMPERATURE_ALL_PARAMETERS,
         "primary": TEMPERATURE_PRIMARY_PARAMETER,
         "stats_fn": compute_temperature_stats,
+        "stats_note": (
+            "These figures cover the full range across the mean, max, and min "
+            "2m air temperature readings for the selected stations and date "
+            "range. They always show the true coldest and hottest single "
+            "readings, so they don't change with the Mean/Max/Min trend-line "
+            "toggle above."
+        ),
     },
     PRECIPITATION_COMPOSITE_KEY: {
         "components": PRECIPITATION_COMPONENT_PARAMETERS,

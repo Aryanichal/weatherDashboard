@@ -233,6 +233,20 @@ else:
 
     HISTORICAL_VIEWS[active_view].render(ctx)
 
+    st.divider()
+    st.caption(
+        "**Data source:** Deutscher Wetterdienst (DWD), Climate Data Center (CDC), "
+        "historical daily station observations (\"climate_summary\", dataset ID "
+        "`urn:wmo:md:de-dwd-cdc:obsgermany-climate-daily-kl`), accessed via the "
+        "[wetterdienst](https://github.com/earthobservations/wetterdienst) Python "
+        "library (Gutzmann and Motl, DOI: 10.5281/zenodo.3960624). "
+        "https://opendata.dwd.de/climate_environment/CDC/observations_germany/climate/daily/kl/\n\n"
+        "**Coverage:** each station's own reporting window limits which stations are "
+        "selectable for a given date range. Readings for the current, in progress "
+        "year are provisional (DWD's \"recent\" feed, not yet fully quality checked) "
+        "rather than the finalized \"historical\" record."
+    )
+
 # Re-themes the page to whichever "Parameter" dropdown was last changed;
 # must run after the view renders (see apply_dynamic_theme()).
 apply_dynamic_theme(st.session_state.get("active_theme_parameter"))

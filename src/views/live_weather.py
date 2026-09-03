@@ -387,3 +387,15 @@ def render() -> None:
         f"Source: DWD MOSMIX forecast (station {station_id}). Data as of "
         f"{snapshot['as_of'].strftime('%d %b %Y, %H:%M')} local time. Refreshes automatically every 15 minutes."
     )
+
+    st.divider()
+    st.caption(
+        "**Data source:** Deutscher Wetterdienst (DWD), MOSMIX point weather "
+        "forecasts, accessed via the "
+        "[wetterdienst](https://github.com/earthobservations/wetterdienst) Python "
+        "library (Gutzmann and Motl, DOI: 10.5281/zenodo.3960624). "
+        "https://opendata.dwd.de/weather/local_forecasts/mos/\n\n"
+        "**Coverage:** limited to a curated set of about 40 major German cities, "
+        "not every DWD MOSMIX station. Values are model output statistics (MOS) "
+        "forecasts, not direct observations."
+    )

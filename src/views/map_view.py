@@ -39,10 +39,18 @@ def render(ctx: DashboardContext) -> None:
         return
 
     render_section_label(f"Mean {pretty_name(parameter)} by station", style="header")
+    # Per-station means (plotted below) span a narrower range than the raw
+    # readings Key Figures summarizes, so letting Plotly auto-range the color
+    # scale off this chart's own data made its legend disagree with (and
+    # read lower than) Key Figures' own min/max. Pinning range_color to the
+    # same stats keeps the two consistent regardless of parameter.
+    stats = getattr(render_key_figures, "stats", None)
+    range_color = (stats["min"], stats["max"]) if stats and stats["min"] is not None else None
     fig = px.scatter_map(
         merged, lat="latitude", lon="longitude", size="value", color="value",
         hover_name="name", zoom=4.5, map_style="open-street-map",
         labels={"value": pretty_name(parameter)},
+        range_color=range_color,
     )
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0]:
