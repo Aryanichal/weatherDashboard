@@ -41,30 +41,11 @@ _WIND_SPEED_CARD_KEY = "chart-card-parameter_series-wind-speed"
 
 _STATION_COLORS = px.colors.qualitative.Plotly
 _GRID_CHART_HEIGHT = 340
-# Each chart gets its own row now, at CHART_ROW_WIDTH_RATIO's share of the
-# row's width (the remaining column is left empty, or holds a Key Figures
-# box) -- charts that used to sit two to a row (see _render_chart_grid())
-# now stack one per row instead.
 _FEATURED_CHART_HEIGHT = 480
 
-# render_missing_stations_indicator()'s own top/right defaults in
-# common.py already match this view's "Station" legend title position --
-# measured directly via getBoundingClientRect() for the plain single-chart
-# card, the featured (480px-tall) card, and the grid (340px-tall,
-# half-width) card, all landing on the exact same offset. Plotly's legend
-# sits at a fixed pixel distance from the chart's own top/right margins
-# regardless of overall chart height, and every card here shares the same
-# CHART_ROW_WIDTH_RATIO width, so one shared pair covers all three shapes
-# -- no need for separate per-shape constants.
-
 # Which of the other two 2m series bound the shaded band (low, high) for
-# each trend-line choice (see TEMPERATURE_TREND_LABELS in src/analysis.py,
-# shared with -- and rendered by -- render_parameter_and_subset() in
-# src/views/common.py now, not this view specifically).
-# temperature_air_min_2m/_max_2m always occupy the low/high slot no
-# matter what -- min <= mean <= max always holds in DWD's climate_summary
-# -- only temperature_air_mean_2m ever moves between being the line and
-# being a band edge.
+# each trend-line choice. min/max always occupy the low/high slot; only
+# mean ever moves between being the line and being a band edge.
 _TEMPERATURE_BAND_BOUNDS = {
     "temperature_air_mean_2m": ("temperature_air_min_2m", "temperature_air_max_2m"),
     "temperature_air_max_2m": ("temperature_air_min_2m", "temperature_air_mean_2m"),
@@ -176,10 +157,8 @@ def _render_ground_frost_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_monthly_average_chart(subset: pd.DataFrame) -> go.Figure:
-    """Average daily-mean 2m air temperature per calendar month, per
-    station -- always keyed to the mean series regardless of the band
-    chart's trend-line toggle, since this is meant as a stable seasonal
-    reference rather than something that should shift with it."""
+    """Average daily-mean 2m air temperature per calendar month, always
+    keyed to the mean series regardless of the band chart's trend toggle."""
     mean_temp = subset[subset["parameter"] == TEMPERATURE_PRIMARY_PARAMETER].copy()
     mean_temp["month"] = pd.to_datetime(mean_temp["date"]).dt.to_period("M").dt.to_timestamp()
     monthly = mean_temp.groupby(["station_name", "month"], as_index=False)["value"].mean()
@@ -232,12 +211,9 @@ def _render_precipitation_form_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_snow_depth_chart(subset: pd.DataFrame) -> go.Figure:
-    """Daily snow depth per station, as a plain line chart. Grouped under
-    Precipitation since snow is a direct consequence of precipitation
-    falling in that form -- rendered as its own half-width block below
-    the main cards/charts rather than merged into either, since depth (an
-    accumulated stock) isn't the same kind of quantity as a daily rain
-    amount or a categorical form code."""
+    """Daily snow depth per station. Grouped under Precipitation but
+    rendered as its own block, since depth is an accumulated stock, not
+    the same kind of quantity as a daily rain amount or form code."""
     fig = px.line(
         subset, x="date", y="value", color="station_name",
         title="Snow Depth over time",
@@ -248,10 +224,8 @@ def _render_snow_depth_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_wind_speed_chart(subset: pd.DataFrame) -> go.Figure:
-    """Daily mean wind speed per station, as a plain line chart -- gust
-    is kept separate (see _render_wind_gust_chart), since it's an
-    extremely spiky peak-instantaneous reading that doesn't band cleanly
-    against a smoothed daily mean."""
+    """Daily mean wind speed. Gust is kept separate (_render_wind_gust_chart)
+    since it's a spiky peak reading that doesn't band against a daily mean."""
     speed = subset[subset["parameter"] == "wind_speed"]
     fig = px.line(
         speed, x="date", y="value", color="station_name",
@@ -263,9 +237,8 @@ def _render_wind_speed_chart(subset: pd.DataFrame) -> go.Figure:
 
 
 def _render_wind_gust_chart(subset: pd.DataFrame) -> go.Figure:
-    """Peak wind gust per calendar month, per station, as a bar chart --
-    zooms out from noisy daily data to one clean monthly worst-gust
-    figure, same idea as _render_monthly_average_chart() for temperature."""
+    """Peak wind gust per calendar month -- zooms out from noisy daily data,
+    same idea as _render_monthly_average_chart() for temperature."""
     gust = subset[subset["parameter"] == "wind_gust_max"].copy()
     gust["month"] = pd.to_datetime(gust["date"]).dt.to_period("M").dt.to_timestamp()
     monthly = gust.groupby(["station_name", "month"], as_index=False)["value"].max()
@@ -285,19 +258,11 @@ def _render_featured_chart(
     card_key: str | None = None,
     render_key_figures: Callable[..., None] | None = None,
 ) -> None:
-    """Render one chart at CHART_ROW_WIDTH_RATIO's share of its row's
-    width, at the taller "featured" height, above whatever grid of smaller
-    charts follows it. ``render_key_figures``, when given, renders that
-    composite's Key Figures box (see render_parameter_and_subset() in
-    common.py) into the row's remaining column, right next to this chart
-    -- passed _FEATURED_CHART_HEIGHT so the box's own height matches this
-    chart's.
-
-    ``missing``/``card_key``, when given, overlay the missing-station
-    warning icon (see render_missing_stations_indicator() in common.py,
-    whose own default top/right offsets already match this chart's
-    "Station" legend title position) next to it -- ``card_key`` must then
-    be unique app-wide (it becomes this chart_card()'s own key)."""
+    """Render one chart at the taller "featured" height, above whatever
+    grid of smaller charts follows it. ``render_key_figures``, when given,
+    renders that composite's Key Figures box into the row's remaining
+    column. ``missing``/``card_key``, when given, overlay the
+    missing-station warning icon; ``card_key`` must be unique app-wide."""
     fig.update_layout(height=_FEATURED_CHART_HEIGHT)
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0], chart_card(key=card_key):
@@ -315,26 +280,12 @@ def _render_chart_grid(
     icon_card_key: str | None = None,
     render_key_figures: Callable[..., None] | None = None,
 ) -> None:
-    """Lay out ``figs`` one per row, each sized to CHART_ROW_WIDTH_RATIO's
-    share of the row (the remaining column is left empty, or holds a Key
-    Figures box) instead of pairing two to a row -- a chart that used to
-    sit side by side with another now gets pushed to its own row below it
-    instead.
-
+    """Lay out ``figs`` one per row instead of pairing two to a row.
     ``missing``/``icon_card_key``, when given, overlay the missing-station
-    warning icon (see render_missing_stations_indicator() in common.py) on
-    just the *first* chart's card -- one pointer per parameter view is
-    enough (the full breakdown is always the notice banner rendered below
-    the whole section), and the first chart is each composite's "primary"
-    component (see COMPOSITE_PARAMETER_GROUPS in src/analysis.py), so it's
-    the one most representative of the parameter as a whole. ``icon_card_key``
-    must be unique app-wide (it becomes that one chart_card()'s own key);
-    every other card in the grid stays unkeyed, as before.
-
-    ``render_key_figures``, when given, renders that composite's Key
-    Figures box (see render_parameter_and_subset() in common.py) into the
-    *first* chart's row, same reasoning as ``icon_card_key`` -- every
-    later chart's remaining column stays empty."""
+    warning icon on just the *first* chart's card (the composite's
+    "primary" component) -- ``icon_card_key`` must be unique app-wide.
+    ``render_key_figures``, when given, renders into that same first row;
+    every later row's remaining column stays empty."""
     for fig in figs:
         fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
     is_first = True
@@ -352,13 +303,10 @@ def _render_chart_grid(
 
 
 def _render_chart_row(fig: go.Figure, render_key_figures: Callable[..., None] | None = None) -> None:
-    """Render one chart at CHART_ROW_WIDTH_RATIO's share of its row's
-    width (same as _render_chart_grid()) -- for a chart meant to sit
-    directly under a specific chart above it (Snow Depth positioned below
-    Precipitation over time) rather than stretch full width.
-    ``render_key_figures``, when given, renders that chart's own Key
-    Figures box (see render_parameter_and_subset() in common.py) into the
-    row's remaining column; left empty otherwise."""
+    """Render one chart at CHART_ROW_WIDTH_RATIO's share of its row, for a
+    chart meant to sit under a specific chart above it rather than stretch
+    full width. ``render_key_figures``, when given, renders into the row's
+    remaining column."""
     fig.update_layout(height=_GRID_CHART_HEIGHT, title_font_size=16)
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0], chart_card():
@@ -369,22 +317,15 @@ def _render_chart_row(fig: go.Figure, render_key_figures: Callable[..., None] | 
 
 
 def _render_humidity_composite(ctx: DashboardContext, subset: pd.DataFrame) -> list[dict[str, str]]:
-    """Humidity and Pressure Vapor: each component's own chart, with its
-    own Key Figures box beside it in the row's remaining column (see
-    CHART_ROW_WIDTH_RATIO) -- Humidity's chart+box, then Pressure Vapor's
-    own chart+box below. This is why COMPOSITE_PARAMETER_GROUPS marks this
-    composite with "stats_parameters" instead of a "primary":
-    render_parameter_and_subset() in src/views/common.py deliberately
-    leaves ``render_key_figures`` as ``None`` for it, leaving both the
-    ordering and the per-component box entirely up to this function.
+    """Humidity and Pressure Vapor: each component's own chart, with its own
+    Key Figures box beside it. Marked "stats_parameters" in
+    COMPOSITE_PARAMETER_GROUPS so render_parameter_and_subset() leaves
+    ``render_key_figures`` as ``None``, leaving layout up to this function.
 
     Each component gets its own missing-station check scoped to just that
-    component (not the "humidity_pressure_vapor" composite as a whole) --
-    a station with humidity data but none for pressure_vapor is "present"
-    at the composite level, which would wrongly suppress the warning on
-    the Pressure Vapor chart it's actually about to silently vanish from
-    (see find_stations_missing_data()'s docstring). Returns the merged
-    list for render() to pass to render_missing_stations_notice()."""
+    component, not the composite as a whole -- a station present via
+    humidity alone shouldn't suppress the warning on the Pressure Vapor
+    chart it's missing from. Returns the merged list for render()."""
     missing_lists = []
     for component in HUMIDITY_COMPOSITE_COMPONENTS:
         component_subset = subset[subset["parameter"] == component]
@@ -417,17 +358,10 @@ def render(ctx: DashboardContext) -> None:
         ground_subset = subset[subset["parameter"] == TEMPERATURE_GROUND_PARAMETER]
         monthly_subset = subset[subset["parameter"] == TEMPERATURE_PRIMARY_PARAMETER]
 
-        # Each chart below is checked against exactly the parameter(s) it
-        # actually draws from, not the whole "temperature" composite's
-        # union (all four of the 2m trio + ground) -- a station present
-        # only via, say, ground-frost data would otherwise read as
-        # "present" for the 2m band chart above even though it has zero
-        # rows for any of the three series that chart needs (see
-        # find_stations_missing_data()'s docstring for why the union was
-        # wrong here). The band chart still checks against all three 2m
-        # series together (it draws all three as one shaded band, unlike
-        # the single-series charts below), so it only flags a station
-        # missing every one of them, not one alone.
+        # Each chart is checked against exactly the parameter(s) it draws
+        # from, not the whole composite's union, so a station present only
+        # via ground-frost data doesn't wrongly read as "present" for the
+        # 2m band chart it has zero rows for.
         band_missing = find_stations_missing_data(
             ctx, TEMPERATURE_COMPOSITE_KEY, band_subset, ctx.start_date, ctx.end_date,
             component_parameters=TEMPERATURE_COMPONENT_PARAMETERS,
@@ -439,14 +373,8 @@ def render(ctx: DashboardContext) -> None:
             ctx, TEMPERATURE_PRIMARY_PARAMETER, monthly_subset, ctx.start_date, ctx.end_date
         )
 
-        # The Mean/Max/Min trend-line toggle itself was already rendered
-        # by render_parameter_and_subset() above (shared across every view
-        # that offers the Temperature composite, not just this one --
-        # see its docstring) -- effective_parameter is exactly which of
-        # the three 2m series it currently has selected. Key Figures (one
-        # merged box for the whole composite, via "stats_fn" -- see
-        # COMPOSITE_PARAMETER_GROUPS in src/analysis.py) sits next to this
-        # featured chart; the grid charts below it don't get their own.
+        # effective_parameter is whichever 2m series the shared Mean/Max/Min
+        # toggle (rendered by render_parameter_and_subset()) has selected.
         _render_featured_chart(
             _render_temperature_band(band_subset, effective_parameter),
             missing=band_missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY, render_key_figures=render_key_figures,
@@ -466,25 +394,12 @@ def render(ctx: DashboardContext) -> None:
         form_subset = subset[subset["parameter"] == "precipitation_form"]
         snow_subset = subset[subset["parameter"] == "snow_depth"]
 
-        # Precipitation's three components (height/form/snow depth) each
-        # get their own chart below, so each needs its own correctly-
-        # scoped check -- the composite-wide union would call a station
-        # "present" off any one of the three, even for the specific chart
-        # it has zero rows for (see find_stations_missing_data()'s
-        # docstring; this exact case -- a station with precipitation_form
-        # but no precipitation_height -- silently vanishing from the
-        # height chart with no warning at all was the confirmed bug).
         height_missing = find_stations_missing_data(
             ctx, "precipitation_height", height_subset, ctx.start_date, ctx.end_date
         )
         form_missing = find_stations_missing_data(ctx, "precipitation_form", form_subset, ctx.start_date, ctx.end_date)
         snow_missing = find_stations_missing_data(ctx, "snow_depth", snow_subset, ctx.start_date, ctx.end_date)
 
-        # Main precipitation Key Figures (unchanged) comes from
-        # render_parameter_and_subset()'s default "primary" handling
-        # above, keyed off precipitation_height as always -- rendered next
-        # to its own chart (the first one below). Snow Depth gets its own
-        # box next to its own chart, appended below.
         _render_chart_grid(
             [
                 _render_precipitation_height_chart(subset),
@@ -504,11 +419,7 @@ def render(ctx: DashboardContext) -> None:
     elif parameter == WIND_COMPOSITE_KEY:
         speed_subset = subset[subset["parameter"] == "wind_speed"]
         gust_subset = subset[subset["parameter"] == "wind_gust_max"]
-
-        # Same fix as Precipitation/Temperature above -- Wind Speed and
-        # Peak Gust are separate charts, each drawn from just one of the
-        # composite's two components, so each needs its own check instead
-        # of sharing one computed against their union.
+        
         speed_missing = find_stations_missing_data(ctx, "wind_speed", speed_subset, ctx.start_date, ctx.end_date)
         gust_missing = find_stations_missing_data(ctx, "wind_gust_max", gust_subset, ctx.start_date, ctx.end_date)
 
@@ -521,10 +432,6 @@ def render(ctx: DashboardContext) -> None:
         )
         render_missing_stations_notice(merge_missing_stations(speed_missing, gust_missing), _MISSING_ANCHOR)
     elif parameter == HUMIDITY_COMPOSITE_KEY:
-        # _render_humidity_composite() computes its own per-component
-        # checks internally (Humidity and Pressure Vapor are equal
-        # siblings here, not a primary + grid, so each gets its own icon)
-        # and returns them already merged.
         humidity_missing = _render_humidity_composite(ctx, subset)
         render_missing_stations_notice(humidity_missing, _MISSING_ANCHOR)
     else:

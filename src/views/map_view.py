@@ -5,14 +5,14 @@ import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_stations
-from src.ui_theme import chart_card, render_chart
 from src.views.common import (
     CHART_ROW_WIDTH_RATIO,
     find_stations_missing_data,
     pretty_name,
-    render_missing_stations_indicator,
+    render_full_bleed_map,
     render_missing_stations_notice,
     render_parameter_and_subset,
+    render_section_label,
 )
 
 _MISSING_ANCHOR = "missing-stations-parameter_map"
@@ -38,20 +38,23 @@ def render(ctx: DashboardContext) -> None:
         render_missing_stations_notice(missing, _MISSING_ANCHOR)
         return
 
+    render_section_label(f"Mean {pretty_name(parameter)} by station", style="header")
+    # Per-station means (plotted below) span a narrower range than the raw
+    # readings Key Figures summarizes, so letting Plotly auto-range the color
+    # scale off this chart's own data made its legend disagree with (and
+    # read lower than) Key Figures' own min/max. Pinning range_color to the
+    # same stats keeps the two consistent regardless of parameter.
+    stats = getattr(render_key_figures, "stats", None)
+    range_color = (stats["min"], stats["max"]) if stats and stats["min"] is not None else None
     fig = px.scatter_map(
         merged, lat="latitude", lon="longitude", size="value", color="value",
         hover_name="name", zoom=4.5, map_style="open-street-map",
-        title=f"Mean {pretty_name(parameter)} by station",
         labels={"value": pretty_name(parameter)},
+        range_color=range_color,
     )
-    # CHART_ROW_WIDTH_RATIO's share of the row, same as every other
-    # chart-bearing tab (Time Series, Regression, Clustering) -- see
-    # common.py for where this convention started. Key Figures goes in
-    # the remaining column, right next to the map.
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
-    with row_columns[0], chart_card(key=_CHART_CARD_KEY):
-        render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=_CHART_CARD_KEY)
-        render_chart(fig)
+    with row_columns[0]:
+        render_full_bleed_map(fig, _CHART_CARD_KEY, missing, _MISSING_ANCHOR)
     if render_key_figures:
         with row_columns[1]:
             render_key_figures()

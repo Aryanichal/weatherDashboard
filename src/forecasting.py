@@ -1,10 +1,8 @@
 """Forecast annual climate indicators for the long-run city stations.
 
-The module aggregates daily observations into annual counts of days whose
-maximum temperature exceeds 30 °C. It forecasts the long-term climate-impact
-trend, not the weather in a particular future year. Both fitted models are
-re-created from source data on each uncached run, so the exported CSV is
-reproducible and contains no opaque saved model binaries.
+Forecasts the long-term climate-impact trend, not the weather in a
+particular future year. Models are re-fit from source data on each
+uncached run rather than loaded from saved binaries.
 """
 
 from datetime import UTC, datetime
@@ -119,8 +117,7 @@ def _last_complete_year() -> int:
 def prepare_hot_day_counts() -> pd.DataFrame:
     """Return one annual above-30 °C day count per city and complete year.
 
-    The current calendar year is excluded, so every count used by the forecast
-    covers a full January--December period.
+    Excludes the current calendar year, since it isn't complete yet.
     """
     last_complete_year = _last_complete_year()
     hot_days = get_hot_days_data(
@@ -239,8 +236,7 @@ def _fit_predict(
     prediction_years: np.ndarray,
     minimum_prediction: float | None = None,
 ) -> np.ndarray:
-    # Both implementations deliberately expose the scikit-learn fit/predict
-    # interface, so this comparison and the validation loop are identical.
+    # Both models expose the scikit-learn fit/predict interface.
     model.fit(train[["year"]], train["observed_value"])
     predictions = model.predict(pd.DataFrame({"year": prediction_years}))
     return np.maximum(predictions, minimum_prediction) if minimum_prediction is not None else predictions
@@ -251,8 +247,7 @@ def _validation_residuals(
 ) -> np.ndarray:
     """Collect one-step expanding-window validation residuals within training."""
     residuals: list[float] = []
-    # Start after ten annual observations so the neural-network benchmark has
-    # enough data to fit before it is asked to make a validation prediction.
+    # Need at least 10 years of history before the NN can fit reliably.
     first_validation_year = int(train["year"].min()) + 10
     for year in range(first_validation_year, int(train["year"].max()) + 1):
         history = train.loc[train["year"] < year]
@@ -265,11 +260,9 @@ def _validation_residuals(
 
 
 def build_and_save_forecasts() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate both models, save their forecasts (FORECAST_HORIZON_YEARS years out), and return all data.
+    """Evaluate both models, save forecasts to :data:`FORECAST_CSV_PATH`, and return all data.
 
-    Returns ``(forecasts, metrics, historical_values)`` for hot-day, July-
-    temperature, and rainy-day targets. Forecast rows are saved to
-    :data:`FORECAST_CSV_PATH`.
+    Returns ``(forecasts, metrics, historical_values)``.
     """
     historical = pd.concat(
         [prepare_hot_day_counts(), prepare_july_temperatures(), prepare_rainy_day_counts()],

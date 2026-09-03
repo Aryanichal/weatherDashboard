@@ -2,6 +2,7 @@
 
 import datetime as dt
 from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 
@@ -14,3 +15,5 @@ class DashboardContext:
     id_to_name: dict[str, str]
     start_date: dt.date
     end_date: dt.date
+    region: str | None = None
+    region_column: Any = None
