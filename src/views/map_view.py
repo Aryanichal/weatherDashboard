@@ -1,26 +1,61 @@
 """Map tab: mean parameter value per station, plotted geographically."""
 
-import pandas as pd
 import plotly.express as px
 import streamlit as st
 
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_stations
-from src.views.common import render_parameter_and_subset
+from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
+    find_stations_missing_data,
+    pretty_name,
+    render_full_bleed_map,
+    render_missing_stations_notice,
+    render_parameter_and_subset,
+    render_section_label,
+)
+
+_MISSING_ANCHOR = "missing-stations-parameter_map"
+_CHART_CARD_KEY = "chart-card-parameter_map"
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_map")
-    stations_meta = load_stations() if ctx.use_full_list else pd.DataFrame()
+    _parameter, _subset, parameter, subset, render_key_figures = render_parameter_and_subset(
+        ctx.raw, key="parameter_map", collapse_composites=True
+    )
+    missing = find_stations_missing_data(ctx, parameter, subset, ctx.start_date, ctx.end_date)
+
+    stations_meta = load_stations()
     if stations_meta.empty:
-        st.caption("Enable 'Browse full DWD station list' in the sidebar to see station coordinates.")
+        st.caption("Station coordinate metadata is unavailable right now.")
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
         return
 
     avg_value = subset.groupby("station_id", as_index=False)["value"].mean()
     merged = stations_meta.merge(avg_value, on="station_id")
+    if merged.empty:
+        st.caption(f"No {pretty_name(parameter)} data for any selected station in this date range.")
+        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        return
+
+    render_section_label(f"Mean {pretty_name(parameter)} by station", style="header")
+    # Per-station means (plotted below) span a narrower range than the raw
+    # readings Key Figures summarizes, so letting Plotly auto-range the color
+    # scale off this chart's own data made its legend disagree with (and
+    # read lower than) Key Figures' own min/max. Pinning range_color to the
+    # same stats keeps the two consistent regardless of parameter.
+    stats = getattr(render_key_figures, "stats", None)
+    range_color = (stats["min"], stats["max"]) if stats and stats["min"] is not None else None
     fig = px.scatter_map(
         merged, lat="latitude", lon="longitude", size="value", color="value",
         hover_name="name", zoom=4.5, map_style="open-street-map",
-        title=f"Mean {parameter} by station",
+        labels={"value": pretty_name(parameter)},
+        range_color=range_color,
     )
-    st.plotly_chart(fig, width="stretch")
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0]:
+        render_full_bleed_map(fig, _CHART_CARD_KEY, missing, _MISSING_ANCHOR)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures()
+    render_missing_stations_notice(missing, _MISSING_ANCHOR)

@@ -1,10 +1,8 @@
-"""Forecast annual hot-day counts for the long-run city stations.
+"""Forecast annual climate indicators for the long-run city stations.
 
-The module aggregates daily observations into annual counts of days whose
-maximum temperature exceeds 30 °C. It forecasts the long-term climate-impact
-trend, not the weather in a particular future year. Both fitted models are
-re-created from source data on each uncached run, so the exported CSV is
-reproducible and contains no opaque saved model binaries.
+Forecasts the long-term climate-impact trend, not the weather in a
+particular future year. Models are re-fit from source data on each
+uncached run rather than loaded from saved binaries.
 """
 
 from datetime import UTC, datetime
@@ -30,13 +28,15 @@ FORECAST_START_YEAR = 1991
 EVALUATION_START_YEAR = 2020
 FORECAST_HORIZON_YEARS = 20
 HOT_DAY_THRESHOLD = 30.0
+RAINY_DAY_THRESHOLD = 1.0
 PYTORCH_MODEL_NAME = "PyTorch NN (10 layers, 200 epochs)"
 FORECAST_CSV_PATH = DATA_DIR / "global_warming_forecasts.csv"
 # Include this in Streamlit's cache key. Bump it whenever the returned
 # dataframe schema or forecasting target changes.
-FORECAST_CACHE_VERSION = "hot-days-and-july-temperature-v4"
+FORECAST_CACHE_VERSION = "hot-days-july-and-rainy-days-v2"
 HOT_DAYS_INDICATOR = "Hot days above 30 °C"
 JULY_TEMPERATURE_INDICATOR = "Average July temperature"
+RAINY_DAYS_INDICATOR = "Rainy days above 1 mm"
 
 
 class HotDayNeuralNetwork(nn.Module):
@@ -117,8 +117,7 @@ def _last_complete_year() -> int:
 def prepare_hot_day_counts() -> pd.DataFrame:
     """Return one annual above-30 °C day count per city and complete year.
 
-    The current calendar year is excluded, so every count used by the forecast
-    covers a full January--December period.
+    Excludes the current calendar year, since it isn't complete yet.
     """
     last_complete_year = _last_complete_year()
     hot_days = get_hot_days_data(
@@ -178,6 +177,49 @@ def prepare_july_temperatures() -> pd.DataFrame:
     )
 
 
+def prepare_rainy_day_counts() -> pd.DataFrame:
+    """Return annual counts of days with more than 1 mm precipitation per city."""
+    last_complete_year = _last_complete_year()
+    observations = get_station_data(
+        station_ids=list(LONG_RUN_CITY_STATIONS.values()),
+        start_date=f"{FORECAST_START_YEAR}-01-01",
+        end_date=f"{datetime.now(UTC).year}-12-31",
+        cache=True,
+    )
+    station_to_city = {station_id: city for city, station_id in LONG_RUN_CITY_STATIONS.items()}
+    precipitation = observations.loc[
+        observations["parameter"] == "precipitation_height",
+        ["station_id", "date", "value"],
+    ].dropna()
+    precipitation = precipitation.assign(date=pd.to_datetime(precipitation["date"], utc=True))
+    precipitation["city"] = precipitation["station_id"].astype(str).map(station_to_city)
+    precipitation["year"] = precipitation["date"].dt.year
+    precipitation = precipitation.loc[
+        precipitation["city"].notna()
+        & precipitation["year"].between(FORECAST_START_YEAR, last_complete_year)
+    ]
+    city_years = pd.MultiIndex.from_product(
+        [LONG_RUN_CITY_STATIONS, range(FORECAST_START_YEAR, last_complete_year + 1)],
+        names=["city", "year"],
+    ).to_frame(index=False)
+    observation_counts = precipitation.groupby(["city", "year"], as_index=False).size()
+    rainy_days = (
+        precipitation.loc[precipitation["value"] > RAINY_DAY_THRESHOLD]
+        .groupby(["city", "year"], as_index=False)
+        .size()
+        .rename(columns={"size": "observed_rainy_days"})
+    )
+    result = (
+        city_years.merge(rainy_days, on=["city", "year"], how="left")
+        .merge(observation_counts, on=["city", "year"], how="left")
+    )
+    result["observed_rainy_days"] = result["observed_rainy_days"].fillna(0)
+    result.loc[result["size"].isna(), "observed_rainy_days"] = np.nan
+    return result.assign(
+        indicator=RAINY_DAYS_INDICATOR,
+        unit="days",
+        observed_value=lambda frame: frame["observed_rainy_days"].astype(float),
+    )[["city", "year", "indicator", "unit", "observed_value"]]
 def _make_models() -> dict[str, object]:
     """Create deterministic, deliberately small models for a short annual series."""
     return {
@@ -194,8 +236,7 @@ def _fit_predict(
     prediction_years: np.ndarray,
     minimum_prediction: float | None = None,
 ) -> np.ndarray:
-    # Both implementations deliberately expose the scikit-learn fit/predict
-    # interface, so this comparison and the validation loop are identical.
+    # Both models expose the scikit-learn fit/predict interface.
     model.fit(train[["year"]], train["observed_value"])
     predictions = model.predict(pd.DataFrame({"year": prediction_years}))
     return np.maximum(predictions, minimum_prediction) if minimum_prediction is not None else predictions
@@ -206,8 +247,7 @@ def _validation_residuals(
 ) -> np.ndarray:
     """Collect one-step expanding-window validation residuals within training."""
     residuals: list[float] = []
-    # Start after ten annual observations so the neural-network benchmark has
-    # enough data to fit before it is asked to make a validation prediction.
+    # Need at least 10 years of history before the NN can fit reliably.
     first_validation_year = int(train["year"].min()) + 10
     for year in range(first_validation_year, int(train["year"].max()) + 1):
         history = train.loc[train["year"] < year]
@@ -220,12 +260,14 @@ def _validation_residuals(
 
 
 def build_and_save_forecasts() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate both models, save their 10-year forecasts, and return all data.
+    """Evaluate both models, save forecasts to :data:`FORECAST_CSV_PATH`, and return all data.
 
-    Returns ``(forecasts, metrics, historical_values)`` for both hot-day and
-    July-temperature targets. Forecast rows are saved to :data:`FORECAST_CSV_PATH`.
+    Returns ``(forecasts, metrics, historical_values)``.
     """
-    historical = pd.concat([prepare_hot_day_counts(), prepare_july_temperatures()], ignore_index=True)
+    historical = pd.concat(
+        [prepare_hot_day_counts(), prepare_july_temperatures(), prepare_rainy_day_counts()],
+        ignore_index=True,
+    )
     last_complete_year = _last_complete_year()
     if last_complete_year < EVALUATION_START_YEAR:
         raise ValueError("At least one complete evaluation year is required for forecasting.")
@@ -236,7 +278,7 @@ def build_and_save_forecasts() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
     metric_rows: list[dict[str, object]] = []
 
     for indicator, indicator_data in historical.groupby("indicator", sort=False):
-        minimum_prediction = 0.0 if indicator == HOT_DAYS_INDICATOR else None
+        minimum_prediction = 0.0 if indicator in {HOT_DAYS_INDICATOR, RAINY_DAYS_INDICATOR} else None
         unit = indicator_data["unit"].iloc[0]
         for city, city_data in indicator_data.groupby("city", sort=True):
             city_data = city_data.dropna(subset=["observed_value"]).sort_values("year")
@@ -245,7 +287,12 @@ def build_and_save_forecasts() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
             if train.shape[0] < 11 or test.empty:
                 raise ValueError(f"Insufficient complete annual data to forecast {city}.")
 
-            for model_name, model in _make_models().items():
+            models = (
+                {"Linear trend": _make_models()["Linear trend"]}
+                if indicator == RAINY_DAYS_INDICATOR
+                else _make_models()
+            )
+            for model_name, model in models.items():
                 test_prediction = _fit_predict(
                     model, train, test["year"].to_numpy(), minimum_prediction
                 )
