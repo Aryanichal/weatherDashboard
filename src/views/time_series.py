@@ -24,6 +24,7 @@ from src.ui_theme import chart_card, render_chart
 from src.views.common import (
     CHART_ROW_WIDTH_RATIO,
     find_stations_missing_data,
+    merge_missing_stations,
     pretty_name,
     render_key_figures_box,
     render_missing_stations_indicator,
@@ -34,6 +35,7 @@ from src.views.common import (
 _MISSING_ANCHOR = "missing-stations-parameter_series"
 _CHART_CARD_KEY = "chart-card-parameter_series"
 _TEMPERATURE_FEATURED_CARD_KEY = "chart-card-parameter_series-temperature-featured"
+_TEMPERATURE_GROUND_CARD_KEY = "chart-card-parameter_series-temperature-ground"
 _PRECIPITATION_HEIGHT_CARD_KEY = "chart-card-parameter_series-precipitation-height"
 _WIND_SPEED_CARD_KEY = "chart-card-parameter_series-wind-speed"
 
@@ -45,16 +47,15 @@ _GRID_CHART_HEIGHT = 340
 # now stack one per row instead.
 _FEATURED_CHART_HEIGHT = 480
 
-# Missing-station icon offsets (see render_missing_stations_indicator() in
-# common.py), each measured via getBoundingClientRect() against its own
-# chart's card the same way the plain single-chart branch's 73px/98px
-# were -- kept as separate constants per chart shape rather than one
-# shared pair since there's no guarantee they stay this close for a chart
-# of a substantially different height/width; they just happened to land
-# on nearly the same values here (73px/92px) for both the featured
-# (480px-tall) and grid (340px-tall, half-width) charts.
-_FEATURED_ICON_TOP, _FEATURED_ICON_RIGHT = "73px", "92px"
-_GRID_ICON_TOP, _GRID_ICON_RIGHT = "73px", "92px"
+# render_missing_stations_indicator()'s own top/right defaults in
+# common.py already match this view's "Station" legend title position --
+# measured directly via getBoundingClientRect() for the plain single-chart
+# card, the featured (480px-tall) card, and the grid (340px-tall,
+# half-width) card, all landing on the exact same offset. Plotly's legend
+# sits at a fixed pixel distance from the chart's own top/right margins
+# regardless of overall chart height, and every card here shares the same
+# CHART_ROW_WIDTH_RATIO width, so one shared pair covers all three shapes
+# -- no need for separate per-shape constants.
 
 # Which of the other two 2m series bound the shaded band (low, high) for
 # each trend-line choice (see TEMPERATURE_TREND_LABELS in src/analysis.py,
@@ -293,21 +294,15 @@ def _render_featured_chart(
     chart's.
 
     ``missing``/``card_key``, when given, overlay the missing-station
-    warning icon (see render_missing_stations_indicator() in common.py)
-    next to this chart's own "Station" legend title -- ``card_key`` must
-    then be unique app-wide (it becomes this chart_card()'s own key).
-    _FEATURED_ICON_TOP/_RIGHT are this height's own measured offsets,
-    distinct from the plain single-chart branch's (_render_chart() has no
-    counterpart here -- this is always taller), since the icon has to sit
-    at the legend's own vertical position and that moves with chart
-    height (see render_missing_stations_indicator()'s docstring)."""
+    warning icon (see render_missing_stations_indicator() in common.py,
+    whose own default top/right offsets already match this chart's
+    "Station" legend title position) next to it -- ``card_key`` must then
+    be unique app-wide (it becomes this chart_card()'s own key)."""
     fig.update_layout(height=_FEATURED_CHART_HEIGHT)
     row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
     with row_columns[0], chart_card(key=card_key):
         if missing and card_key:
-            render_missing_stations_indicator(
-                missing, _MISSING_ANCHOR, card_key=card_key, top=_FEATURED_ICON_TOP, right=_FEATURED_ICON_RIGHT
-            )
+            render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=card_key)
         render_chart(fig)
     if render_key_figures:
         with row_columns[1]:
@@ -348,9 +343,7 @@ def _render_chart_grid(
         card_key = icon_card_key if is_first else None
         with row_columns[0], chart_card(key=card_key):
             if is_first and missing and icon_card_key:
-                render_missing_stations_indicator(
-                    missing, _MISSING_ANCHOR, card_key=icon_card_key, top=_GRID_ICON_TOP, right=_GRID_ICON_RIGHT
-                )
+                render_missing_stations_indicator(missing, _MISSING_ANCHOR, card_key=icon_card_key)
             render_chart(fig)
         if is_first and render_key_figures:
             with row_columns[1]:
@@ -375,7 +368,7 @@ def _render_chart_row(fig: go.Figure, render_key_figures: Callable[..., None] | 
             render_key_figures(_GRID_CHART_HEIGHT)
 
 
-def _render_humidity_composite(subset: pd.DataFrame) -> None:
+def _render_humidity_composite(ctx: DashboardContext, subset: pd.DataFrame) -> list[dict[str, str]]:
     """Humidity and Pressure Vapor: each component's own chart, with its
     own Key Figures box beside it in the row's remaining column (see
     CHART_ROW_WIDTH_RATIO) -- Humidity's chart+box, then Pressure Vapor's
@@ -383,14 +376,29 @@ def _render_humidity_composite(subset: pd.DataFrame) -> None:
     composite with "stats_parameters" instead of a "primary":
     render_parameter_and_subset() in src/views/common.py deliberately
     leaves ``render_key_figures`` as ``None`` for it, leaving both the
-    ordering and the per-component box entirely up to this function."""
+    ordering and the per-component box entirely up to this function.
+
+    Each component gets its own missing-station check scoped to just that
+    component (not the "humidity_pressure_vapor" composite as a whole) --
+    a station with humidity data but none for pressure_vapor is "present"
+    at the composite level, which would wrongly suppress the warning on
+    the Pressure Vapor chart it's actually about to silently vanish from
+    (see find_stations_missing_data()'s docstring). Returns the merged
+    list for render() to pass to render_missing_stations_notice()."""
+    missing_lists = []
     for component in HUMIDITY_COMPOSITE_COMPONENTS:
         component_subset = subset[subset["parameter"] == component]
+        component_missing = find_stations_missing_data(ctx, component, component_subset, ctx.start_date, ctx.end_date)
+        missing_lists.append(component_missing)
+        card_key = f"chart-card-parameter_series-{component}"
         row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
-        with row_columns[0], chart_card():
+        with row_columns[0], chart_card(key=card_key):
+            if component_missing:
+                render_missing_stations_indicator(component_missing, _MISSING_ANCHOR, card_key=card_key)
             render_chart(_render_line_chart(component_subset, component))
         with row_columns[1]:
             render_key_figures_box(component_subset, component, key_prefix=f"parameter_series-{component}")
+    return merge_missing_stations(*missing_lists)
 
 
 def render(ctx: DashboardContext) -> None:
@@ -406,6 +414,30 @@ def render(ctx: DashboardContext) -> None:
 
     if parameter == TEMPERATURE_COMPOSITE_KEY:
         band_subset = subset[subset["parameter"].isin(TEMPERATURE_COMPONENT_PARAMETERS)]
+        ground_subset = subset[subset["parameter"] == TEMPERATURE_GROUND_PARAMETER]
+        monthly_subset = subset[subset["parameter"] == TEMPERATURE_PRIMARY_PARAMETER]
+
+        # Each chart below is checked against exactly the parameter(s) it
+        # actually draws from, not the whole "temperature" composite's
+        # union (all four of the 2m trio + ground) -- a station present
+        # only via, say, ground-frost data would otherwise read as
+        # "present" for the 2m band chart above even though it has zero
+        # rows for any of the three series that chart needs (see
+        # find_stations_missing_data()'s docstring for why the union was
+        # wrong here). The band chart still checks against all three 2m
+        # series together (it draws all three as one shaded band, unlike
+        # the single-series charts below), so it only flags a station
+        # missing every one of them, not one alone.
+        band_missing = find_stations_missing_data(
+            ctx, TEMPERATURE_COMPOSITE_KEY, band_subset, ctx.start_date, ctx.end_date,
+            component_parameters=TEMPERATURE_COMPONENT_PARAMETERS,
+        )
+        ground_missing = find_stations_missing_data(
+            ctx, TEMPERATURE_GROUND_PARAMETER, ground_subset, ctx.start_date, ctx.end_date
+        )
+        monthly_missing = find_stations_missing_data(
+            ctx, TEMPERATURE_PRIMARY_PARAMETER, monthly_subset, ctx.start_date, ctx.end_date
+        )
 
         # The Mean/Max/Min trend-line toggle itself was already rendered
         # by render_parameter_and_subset() above (shared across every view
@@ -417,16 +449,37 @@ def render(ctx: DashboardContext) -> None:
         # featured chart; the grid charts below it don't get their own.
         _render_featured_chart(
             _render_temperature_band(band_subset, effective_parameter),
-            missing=missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY, render_key_figures=render_key_figures,
+            missing=band_missing, card_key=_TEMPERATURE_FEATURED_CARD_KEY, render_key_figures=render_key_figures,
         )
         _render_chart_grid(
             [
                 _render_ground_frost_chart(subset),
                 _render_monthly_average_chart(subset),
-            ]
+            ],
+            missing=ground_missing, icon_card_key=_TEMPERATURE_GROUND_CARD_KEY,
         )
-        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        render_missing_stations_notice(
+            merge_missing_stations(band_missing, ground_missing, monthly_missing), _MISSING_ANCHOR
+        )
     elif parameter == PRECIPITATION_COMPOSITE_KEY:
+        height_subset = subset[subset["parameter"] == "precipitation_height"]
+        form_subset = subset[subset["parameter"] == "precipitation_form"]
+        snow_subset = subset[subset["parameter"] == "snow_depth"]
+
+        # Precipitation's three components (height/form/snow depth) each
+        # get their own chart below, so each needs its own correctly-
+        # scoped check -- the composite-wide union would call a station
+        # "present" off any one of the three, even for the specific chart
+        # it has zero rows for (see find_stations_missing_data()'s
+        # docstring; this exact case -- a station with precipitation_form
+        # but no precipitation_height -- silently vanishing from the
+        # height chart with no warning at all was the confirmed bug).
+        height_missing = find_stations_missing_data(
+            ctx, "precipitation_height", height_subset, ctx.start_date, ctx.end_date
+        )
+        form_missing = find_stations_missing_data(ctx, "precipitation_form", form_subset, ctx.start_date, ctx.end_date)
+        snow_missing = find_stations_missing_data(ctx, "snow_depth", snow_subset, ctx.start_date, ctx.end_date)
+
         # Main precipitation Key Figures (unchanged) comes from
         # render_parameter_and_subset()'s default "primary" handling
         # above, keyed off precipitation_height as always -- rendered next
@@ -437,28 +490,43 @@ def render(ctx: DashboardContext) -> None:
                 _render_precipitation_height_chart(subset),
                 _render_precipitation_form_chart(subset),
             ],
-            missing=missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY, render_key_figures=render_key_figures,
+            missing=height_missing, icon_card_key=_PRECIPITATION_HEIGHT_CARD_KEY, render_key_figures=render_key_figures,
         )
-        snow_subset = subset[subset["parameter"] == "snow_depth"]
         _render_chart_row(
             _render_snow_depth_chart(snow_subset),
             render_key_figures=lambda chart_height=_GRID_CHART_HEIGHT: render_key_figures_box(
                 snow_subset, "snow_depth", key_prefix="parameter_series-snow_depth", chart_height=chart_height
             ),
         )
-        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        render_missing_stations_notice(
+            merge_missing_stations(height_missing, form_missing, snow_missing), _MISSING_ANCHOR
+        )
     elif parameter == WIND_COMPOSITE_KEY:
+        speed_subset = subset[subset["parameter"] == "wind_speed"]
+        gust_subset = subset[subset["parameter"] == "wind_gust_max"]
+
+        # Same fix as Precipitation/Temperature above -- Wind Speed and
+        # Peak Gust are separate charts, each drawn from just one of the
+        # composite's two components, so each needs its own check instead
+        # of sharing one computed against their union.
+        speed_missing = find_stations_missing_data(ctx, "wind_speed", speed_subset, ctx.start_date, ctx.end_date)
+        gust_missing = find_stations_missing_data(ctx, "wind_gust_max", gust_subset, ctx.start_date, ctx.end_date)
+
         _render_chart_grid(
             [
                 _render_wind_speed_chart(subset),
                 _render_wind_gust_chart(subset),
             ],
-            missing=missing, icon_card_key=_WIND_SPEED_CARD_KEY, render_key_figures=render_key_figures,
+            missing=speed_missing, icon_card_key=_WIND_SPEED_CARD_KEY, render_key_figures=render_key_figures,
         )
-        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        render_missing_stations_notice(merge_missing_stations(speed_missing, gust_missing), _MISSING_ANCHOR)
     elif parameter == HUMIDITY_COMPOSITE_KEY:
-        _render_humidity_composite(subset)
-        render_missing_stations_notice(missing, _MISSING_ANCHOR)
+        # _render_humidity_composite() computes its own per-component
+        # checks internally (Humidity and Pressure Vapor are equal
+        # siblings here, not a primary + grid, so each gets its own icon)
+        # and returns them already merged.
+        humidity_missing = _render_humidity_composite(ctx, subset)
+        render_missing_stations_notice(humidity_missing, _MISSING_ANCHOR)
     else:
         row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
         with row_columns[0], chart_card(key=_CHART_CARD_KEY):

@@ -1,10 +1,12 @@
 """Widgets shared across more than one tab view."""
 
 import datetime as dt
+import json
 from collections.abc import Callable
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.analysis import (
     COMPOSITE_PARAMETER_GROUPS,
@@ -55,20 +57,6 @@ def _format_total(value: int | float, unit: str) -> str:
 
 
 def render_section_label(text: str, style: str = "label") -> None:
-    """``style="label"`` (default) is for form-field labels above an input
-    ("Location", "Parameter", "Weather stations", ...). ``style="header"``
-    is for an actual section heading introducing a chart/card below it
-    ("Key Figures:", "10-Day Forecast", "Next 48 hours", ...) -- these are
-    two different roles that, now that the top-level nav's own type size
-    grew substantially (see app.py), need visibly different weight rather
-    than the one size both used before.
-
-    Same token the Live Weather hero's city name uses (see
-    _render_current() in src/views/live_weather.py) -- previously this
-    read --m3-primary instead, which desaturates to a visibly lighter
-    grey than --m3-on-primary-container under the "neutral" theme
-    (#8C8C8C vs #444444), so section titles and that text didn't match.
-    """
     font_size = "20px" if style == "header" else "15px"
     letter_spacing = "0.1px" if style == "header" else "0.2px"
     st.markdown(
@@ -513,6 +501,7 @@ def _station_missing_reason(
     station_id: str,
     start_date: dt.date,
     end_date: dt.date,
+    component_parameters: list[str] | None = None,
 ) -> str:
     """Explain why ``station_id`` has zero valid rows for ``parameter`` in
     ``raw`` over [start_date, end_date].
@@ -536,11 +525,21 @@ def _station_missing_reason(
     ``parameter`` may be a composite key (e.g. "temperature") rather than
     a real DWD parameter -- COMPOSITE_PARAMETER_GROUPS[parameter] never
     appears as a value in ``raw["parameter"]`` itself (see
-    render_parameter_and_subset()'s docstring), so cause 2/3 above are
-    checked against every one of that composite's *components* instead:
-    a station only "does not report" the composite if it has zero rows
-    for every one of them, and only has a "data gap" if it has rows for
-    at least one component but none with a valid value.
+    render_parameter_and_subset()'s docstring), so cause 2/3 above default
+    to checking every one of that composite's *components* instead: a
+    station only "does not report" the composite if it has zero rows for
+    all of them, and only has a "data gap" if it has rows for at least one
+    component but none with a valid value.
+
+    ``component_parameters``, when given, overrides that default and
+    checks against exactly this list instead -- for a caller checking one
+    specific chart drawn from only *some* of a composite's components
+    (e.g. Time Series' Precipitation-height chart, drawn from just
+    "precipitation_height" even though the "precipitation" composite also
+    covers "precipitation_form" and "snow_depth"), the composite-wide
+    default would wrongly call a station "present" off a component that
+    chart never plots at all. See find_stations_missing_data()'s own
+    docstring for why this matters.
     """
     if station_id in metadata.index:
         station_start = metadata.loc[station_id, "start_date"]
@@ -553,9 +552,10 @@ def _station_missing_reason(
                     f"(reports {station_start:%d/%m/%Y}–{station_end:%d/%m/%Y})"
                 )
 
-    component_parameters = (
-        COMPOSITE_PARAMETER_GROUPS[parameter]["components"] if parameter in COMPOSITE_PARAMETER_GROUPS else [parameter]
-    )
+    if component_parameters is None:
+        component_parameters = (
+            COMPOSITE_PARAMETER_GROUPS[parameter]["components"] if parameter in COMPOSITE_PARAMETER_GROUPS else [parameter]
+        )
     station_rows = raw[(raw["station_id"] == station_id) & (raw["parameter"].isin(component_parameters))]
     if station_rows.empty:
         return f"does not report {pretty_name(parameter)}"
@@ -573,12 +573,15 @@ def missing_station_reason(
 
 
 def find_stations_missing_data(
-    ctx: DashboardContext, parameter: str, subset: pd.DataFrame, start_date: dt.date, end_date: dt.date
+    ctx: DashboardContext,
+    parameter: str,
+    subset: pd.DataFrame,
+    start_date: dt.date,
+    end_date: dt.date,
+    component_parameters: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Diff the stations selected in the station-picker row against the
-    ones actually present in ``subset`` (already filtered to ``parameter``
-    and non-null ``value`` by render_parameter_and_subset()), and explain
-    each gap.
+    ones actually present in ``subset``, and explain each gap.
 
     Every chart-producing view (time series, map, clustering; regression
     via missing_station_reason() above) aggregates ``subset`` in a way that
@@ -586,6 +589,23 @@ def find_stations_missing_data(
     a groupby, an inner merge -- with nothing to tell the user that station
     was ever selected. This is the shared "what got dropped and why" check
     each view renders as a notice before its chart.
+
+    ``subset`` must already be filtered to exactly the parameter(s) the
+    caller's own chart actually draws from, and ``component_parameters``
+    (passed straight through to _station_missing_reason() -- see its own
+    docstring) must describe that same set whenever it differs from
+    ``parameter``'s default full-composite meaning. Passing a wider
+    ``subset`` than what's actually plotted silently breaks this check: a
+    station present only via some *other* component of the same composite
+    reads as "present" here even though it has zero rows for whatever this
+    caller is actually about to chart -- confirmed as a real bug in Time
+    Series' per-component composite charts (Precipitation's height/form/
+    snow-depth, Temperature's 2m-band/ground-frost, Wind's speed/gust,
+    Humidity's humidity/pressure-vapor), each of which used to receive the
+    composite-wide union subset and key instead of its own single
+    component's -- see src/views/time_series.py for how each chart now
+    computes its own correctly-scoped missing list instead of sharing one
+    computed against the whole composite.
     """
     selected_ids = [ctx.id_by_name[name] for name in ctx.selected_names]
     present_ids = set(subset["station_id"].unique())
@@ -598,57 +618,152 @@ def find_stations_missing_data(
         {
             "station_id": station_id,
             "station_name": ctx.id_to_name.get(station_id, station_id),
-            "reason": _station_missing_reason(ctx.raw, metadata, parameter, station_id, start_date, end_date),
+            "reason": _station_missing_reason(
+                ctx.raw, metadata, parameter, station_id, start_date, end_date, component_parameters
+            ),
         }
         for station_id in missing_ids
     ]
 
 
-def render_missing_stations_indicator(
-    missing: list[dict[str, str]], anchor_id: str, card_key: str, top: str = "73px", right: str = "98px"
-) -> None:
-    """Warning icon overlaid right next to the "Station" text px already
+def merge_missing_stations(*missing_lists: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Combine several find_stations_missing_data() results (e.g. one per
+    component chart under a composite -- see its own docstring) into one
+    list for a single render_missing_stations_notice() banner, without
+    duplicate ``(station_id, reason)`` bullets. A station can legitimately
+    appear more than once with *different* reasons (missing one component
+    entirely but only has a data gap in another), so this only collapses
+    exact repeats, not every entry for the same station."""
+    seen: set[tuple[str, str]] = set()
+    merged: list[dict[str, str]] = []
+    for missing in missing_lists:
+        for entry in missing:
+            dedupe_key = (entry["station_id"], entry["reason"])
+            if dedupe_key not in seen:
+                seen.add(dedupe_key)
+                merged.append(entry)
+    return merged
+
+
+def render_missing_stations_indicator(missing: list[dict[str, str]], anchor_id: str, card_key: str) -> None:
+    """Warning icon overlaid right next to wherever the word "Station"
     renders inside a tab's chart_card() (the legend title in Time Series,
-    the x-axis title in Clustering) when find_stations_missing_data() found
-    selected stations that aren't plotted. Renders nothing if ``missing``
-    is empty.
+    the x-axis title in Clustering -- px.bar's own `labels={"station_name":
+    "Station", ...}` makes that literally the same word) when
+    find_stations_missing_data() found selected stations that aren't
+    plotted. Renders nothing (but still cleans up a previous run's icon --
+    see below) if ``missing`` is empty.
 
     Must be called from *inside* the same ``with chart_card(key=card_key):``
-    block it's meant to overlay: the icon is positioned absolute, and
-    ``card_key`` is the key that same chart_card() call was given, used
-    here only to scope the CSS that makes that one bordered container
-    ``position: relative`` (Streamlit's own containers are static, so
-    without this the icon would position against the page instead of the
-    card). st.container's own `key=` becomes an "st-key-{key}" class on its
-    wrapper div; [class*=...] substring-matches that regardless of the
-    exact prefix, same trick render_key_figures_box() uses.
+    block it's meant to overlay -- ``card_key`` is the key that same
+    chart_card() call was given, used to find that one bordered container
+    in the DOM. st.container's own `key=` becomes an "st-key-{key}" class
+    on its wrapper div; ``[class*=...]`` substring-matches that regardless
+    of the exact prefix, same trick render_key_figures_box() uses.
 
-    ``top``/``right`` default to the Time Series legend title's measured
-    position (via getBoundingClientRect() against its chart_card, at
-    Plotly's default chart height with a 2-station legend -- Plotly's own
-    legend title has no DOM id to anchor to more precisely, and it isn't
-    responsive to card width since Plotly's own margins are fixed pixels,
-    but it *does* drift vertically as more stations are added and the
-    legend grows taller, or if a caller's own "Station" text sits
-    somewhere else entirely (e.g. clustering's x-axis title) -- callers
-    with a different chart shape should pass their own measured offsets.
+    This used to position the icon with a fixed top/right CSS offset,
+    measured once via getBoundingClientRect() against a live chart and
+    hardcoded from there. That measurement turned out not to generalize:
+    checked directly, the exact same 2-station legend rendered "Station"
+    8px lower when a station had genuinely been filtered out of the chart
+    (the real bug-report scenario) than when every selected station was
+    present and an icon was only added for testing -- Plotly's own legend
+    layout isn't as fixed as it looked from a handful of samples. Rather
+    than chase more fixed numbers that would just as likely break under
+    some other combination of station count / chart type / window width,
+    this measures the real "Station" text's position live in the browser
+    on every run and positions the icon from that, via components.html()
+    -- unlike st.markdown(unsafe_allow_html=True), whose injected
+    <script> tags never execute (confirmed directly: React's innerHTML-
+    style insertion leaves them inert, same as plain DOM innerHTML does),
+    an iframe built by components.html() does run its own scripts, and
+    (same-origin, unsandboxed against the parent by default) can reach
+    ``window.parent.document`` to measure and manipulate the real page
+    rather than its own throwaway iframe document.
+
+    The icon element itself is created once and left in the parent
+    document keyed by ``card_key`` (not recreated by Streamlit's own
+    component reconciliation the way the rest of a rerun's elements are),
+    so a rerun where ``missing`` has become empty has to explicitly remove
+    it itself -- nothing else will.
 
     Purely a pointer, not the explanation itself: hovering shows a one-line
     summary (native browser tooltip via the `title` attribute), and
     clicking jumps to the full per-station breakdown that
     render_missing_stations_notice() renders below the chart -- the two
     share ``anchor_id`` so the link lands exactly on that notice."""
+    icon_id = f"missing-station-icon-{card_key}"
     if not missing:
+        components.html(
+            f'<script>'
+            f'var el = window.parent.document.getElementById({icon_id!r}); '
+            f'if (el) {{ el.remove(); }}'
+            f'</script>',
+            height=0,
+        )
         return
+
     station_word = "station" if len(missing) == 1 else "stations"
     tooltip = f"Data points not available for {len(missing)} selected {station_word} -- click for details"
-    st.markdown(
-        f'<style>[class*="{card_key}"] {{ position: relative; }}</style>'
-        f'<a href="#{anchor_id}" title="{tooltip}" '
-        f'style="position:absolute; top:{top}; right:{right}; z-index:5; '
-        f'text-decoration:none; font-size:12px; line-height:1;" '
-        f'aria-label="warning">⚠️</a>',
-        unsafe_allow_html=True,
+    config = json.dumps({"cardKey": card_key, "iconId": icon_id, "anchorId": anchor_id, "tooltip": tooltip})
+    components.html(
+        f"""
+        <script>
+        (function() {{
+            var cfg = {config};
+            var doc = window.parent.document;
+
+            function place() {{
+                var card = doc.querySelector('[class*="' + cfg.cardKey + '"]');
+                if (!card) return false;
+                var texts = card.querySelectorAll('svg text');
+                var titleEl = null;
+                for (var i = 0; i < texts.length; i++) {{
+                    if (texts[i].textContent.trim() === 'Station') {{ titleEl = texts[i]; break; }}
+                }}
+                if (!titleEl) return false;
+
+                card.style.position = 'relative';
+                var cardRect = card.getBoundingClientRect();
+                var titleRect = titleEl.getBoundingClientRect();
+
+                var icon = doc.getElementById(cfg.iconId);
+                if (!icon) {{
+                    icon = doc.createElement('a');
+                    icon.id = cfg.iconId;
+                    icon.setAttribute('aria-label', 'warning');
+                    icon.textContent = '\\u26A0\\uFE0F';
+                    icon.style.cssText = (
+                        'position:absolute; z-index:5; text-decoration:none; '
+                        + 'font-size:12px; line-height:1;'
+                    );
+                    card.appendChild(icon);
+                }}
+                icon.href = '#' + cfg.anchorId;
+                icon.title = cfg.tooltip;
+                // A few px clear of the text's own right edge, vertically
+                // matched to where that text actually sits this run --
+                // both measured live rather than guessed, since neither
+                // reliably stays put across chart types, station counts,
+                // or which stations happen to be missing (see this
+                // function's own docstring).
+                icon.style.top = (titleRect.top - cardRect.top) + 'px';
+                icon.style.left = (titleRect.right - cardRect.left + 6) + 'px';
+                return true;
+            }}
+
+            // Plotly's own SVG can take a moment to finish rendering
+            // after this script first runs -- retry briefly rather than
+            // giving up after a single failed lookup.
+            var attempts = 0;
+            var timer = setInterval(function() {{
+                attempts += 1;
+                if (place() || attempts > 30) clearInterval(timer);
+            }}, 100);
+        }})();
+        </script>
+        """,
+        height=0,
     )
 
 
@@ -656,17 +771,12 @@ def render_missing_stations_notice(missing: list[dict[str, str]], anchor_id: str
     """Render the per-station explanations from find_stations_missing_data()
     as a single warning banner, or nothing if every selected station has
     data. One banner listing every excluded station rather than one banner
-    each, so N missing stations don't stack N warnings.
-
-    ``anchor_id`` (shared with the render_missing_stations_indicator() call
-    inside the chart above) drops an empty anchor element right before the
-    banner, with a little scroll-margin so it doesn't land flush under
-    Streamlit's fixed top toolbar, purely so that indicator's "click for
-    details" link has somewhere to land."""
+    each, so N missing stations don't stack N warnings."""
+    
     if not missing:
         return
     if anchor_id:
         st.markdown(f'<div id="{anchor_id}" style="scroll-margin-top:80px;"></div>', unsafe_allow_html=True)
     lines = "\n".join(f"- **{station['station_name']}**: {station['reason']}" for station in missing)
     station_word = "station" if len(missing) == 1 else "stations"
-    st.warning(f"Not shown -- no data for {len(missing)} selected {station_word}:\n{lines}")
+    st.warning(f"Not shown: No data for {len(missing)} selected {station_word}:\n{lines}")

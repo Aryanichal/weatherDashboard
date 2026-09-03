@@ -6,6 +6,7 @@ Run with:
 
 import datetime as dt
 
+import pandas as pd
 import streamlit as st
 
 from src.dashboard_context import DashboardContext
@@ -25,6 +26,9 @@ render_brand()
 # loaded station list below, so they match DWD's actual official spelling
 # instead of a hand-typed label going stale/wrong.
 DEFAULT_STATION_IDS = ["00433", "01048"]
+# A compact, useful city list for the normal station picker. The complete DWD
+# directory remains available through the optional browse control below.
+RECOMMENDED_CITY_STATION_IDS = ["00433", "01048", "03379", "01420", "02014", "01443"]
 
 HISTORICAL_VIEWS = {
     "Time Series": time_series,
@@ -127,20 +131,6 @@ else:
     st.session_state[_SHARED_HISTORICAL_VIEW_KEY] = active_view
 
     selection_cols = st.columns([3, 1])
-    with selection_cols[0]:
-        stations_df = load_stations()
-        name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
-        id_by_name = {v: k for k, v in name_by_id.items()}
-
-        render_section_label("Weather stations")
-        selected_names = st.multiselect(
-            "Weather stations",
-            options=list(name_by_id.values()),
-            default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
-            label_visibility="collapsed",
-        )
-        selected_ids = [id_by_name[n] for n in selected_names]
-
     with selection_cols[1]:
         render_section_label("Date range")
         start_date, end_date = st.date_input(
@@ -151,6 +141,70 @@ else:
             format="DD/MM/YYYY",
             label_visibility="collapsed",
         )
+
+    with selection_cols[0]:
+        stations_df = load_stations().copy()
+        stations_df["start_date"] = pd.to_datetime(stations_df["start_date"], utc=True, errors="coerce")
+        stations_df["end_date"] = pd.to_datetime(stations_df["end_date"], utc=True, errors="coerce")
+        selected_start = pd.Timestamp(start_date, tz="UTC")
+        selected_end = pd.Timestamp(end_date, tz="UTC")
+        # The DWD station list contains a station's reporting window. Restrict
+        # choices to windows that overlap the chosen dates, so users cannot
+        # select a station that has no climate-summary data for this analysis.
+        date_compatible_stations = stations_df.loc[
+            (stations_df["start_date"] <= selected_end)
+            & (stations_df["end_date"].isna() | (stations_df["end_date"] >= selected_start))
+        ]
+        # Read the checkbox's own persisted value before the widget itself
+        # renders (it keeps its key across reruns the same way any other
+        # keyed widget does) so "Weather stations" -- like Date range in
+        # the column next to it -- can be the first thing in this column,
+        # rather than sitting one widget lower than Date range because
+        # this checkbox used to render above it.
+        show_all_stations = st.session_state.get("browse_all_historical_stations", False)
+        available_stations = (
+            date_compatible_stations
+            if show_all_stations
+            else date_compatible_stations.loc[
+                date_compatible_stations["station_id"].isin(RECOMMENDED_CITY_STATION_IDS)
+            ]
+        )
+        name_by_id = dict(zip(available_stations["station_id"], available_stations["name"]))
+        id_by_name = {v: k for k, v in name_by_id.items()}
+        available_names = list(name_by_id.values())
+
+        # A date-range change can make an existing selection invalid. Remove
+        # it before rendering the widget rather than leaving a stale option.
+        station_selector_key = "historical_station_selector"
+        if station_selector_key in st.session_state:
+            st.session_state[station_selector_key] = [
+                name for name in st.session_state[station_selector_key] if name in available_names
+            ]
+
+        render_section_label("Weather stations")
+        selected_names = st.multiselect(
+            "Weather stations",
+            options=available_names,
+            default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
+            key=station_selector_key,
+            label_visibility="collapsed",
+            help="Only stations with climate-summary data overlapping the selected date range are listed.",
+        )
+        show_all_stations = st.checkbox(
+            "Browse all DWD stations for this date range",
+            value=False,
+            key="browse_all_historical_stations",
+            help=(
+                "By default, a compact list of verified city stations is shown. Since not every DWD "
+                "station reports on all the parameters for a given time range, some stations here may "
+                "still be missing the specific parameter you pick above."
+            ),
+        )
+        if show_all_stations:
+            st.caption(f"{len(available_names):,} stations are available for this date range.")
+        else:
+            st.caption("Showing six recommended city stations. Enable browsing to search all compatible stations.")
+        selected_ids = [id_by_name[n] for n in selected_names]
 
     if not selected_ids:
         st.info("Select at least one station above to load data.")
@@ -165,6 +219,14 @@ else:
     if raw.empty:
         st.warning("No data returned for this selection.")
         st.stop()
+
+    returned_ids = set(raw["station_id"].astype(str))
+    unavailable_names = [name for name in selected_names if str(id_by_name[name]) not in returned_ids]
+    if unavailable_names:
+        st.warning(
+            "No observations were returned for: " + ", ".join(unavailable_names) + ". They were excluded."
+        )
+        selected_names = [name for name in selected_names if name not in unavailable_names]
 
     raw["station_name"] = raw["station_id"].map(name_by_id)
 
