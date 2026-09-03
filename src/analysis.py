@@ -1,12 +1,14 @@
 """Simple on-demand analysis tools applied to a selection of weather data.
 
-Kept intentionally minimal: a linear trend fit and a KMeans clustering of
-stations. Extend with more sklearn models as needed.
+A linear trend fit and a KMeans clustering of stations across however many
+weather parameters are chosen at once. Extend with more sklearn models as
+needed.
 """
 
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.linear_model import LinearRegression
+from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import StandardScaler
 
 
@@ -26,21 +28,116 @@ def fit_trend(df: pd.DataFrame, date_col: str = "date", value_col: str = "value"
     }
 
 
-def cluster_stations(
-    station_summary: pd.DataFrame,
-    feature_cols: list[str],
-    n_clusters: int = 3,
-) -> pd.DataFrame:
-    """KMeans-cluster stations on aggregated feature columns."""
-    features = station_summary[feature_cols].dropna()
-    scaled = StandardScaler().fit_transform(features)
+# A KMeans run on a single feature is just sorting stations and cutting the
+# sorted list into k chunks -- the useful version clusters on several
+# parameters together, so stations end up grouped by overall climate profile
+# rather than by one number. These are the base (non-composite, continuous)
+# parameters offered as the default feature set wherever that's needed
+# (Clustering tab, Map tab's cluster-coloring mode)  any station missing
+# one isn't dropped from the *offering*, only from the fit itself (see
+# cluster_stations() below), so a station without sunshine data still shows
+# up if it's later deselected from the feature list.
+DEFAULT_CLUSTER_FEATURES = [
+    "temperature_air_mean_2m",
+    "precipitation_height",
+    "wind_speed",
+    "humidity",
+    "sunshine_duration",
+]
+
+
+def build_station_features(raw: pd.DataFrame, feature_params: list[str]) -> pd.DataFrame:
+    """Pivot long-format station observations into one row per station and
+    one column per parameter in ``feature_params``, each holding that
+    station's mean value over whatever date range/stations ``raw`` already
+    covers. A station that never reports one of ``feature_params`` at all
+    gets NaN in that column rather than being silently dropped here --
+    cluster_stations() below is what actually excludes incomplete rows,
+    so callers can still report *which* stations were excluded and why.
+
+    Columns come back in exactly ``feature_params``' order, not the
+    alphabetical order ``unstack()`` would otherwise produce -- keeps
+    column order predictable for callers regardless of what order
+    ``feature_params`` (typically a user's own selection) happened to list
+    them in.
+    """
+    subset = raw[raw["parameter"].isin(feature_params)].dropna(subset=["value"])
+    pivoted = subset.groupby(["station_id", "parameter"])["value"].mean().unstack("parameter")
+    return pivoted.reindex(columns=feature_params)
+
+
+def cluster_stations(features: pd.DataFrame, n_clusters: int = 3) -> pd.DataFrame:
+    """KMeans-cluster stations on however many columns ``features`` has
+    (typically from build_station_features()). Rows with a missing value in
+    any column are dropped before fitting -- KMeans can't handle NaN, and
+    imputing a station's *only* reading for a parameter it doesn't actually
+    report would fabricate data rather than describe it.
+
+    Returns the clustered rows, original index preserved, with one
+    "cluster" column appended.
+    """
+    complete = features.dropna()
+    scaled = StandardScaler().fit_transform(complete)
 
     model = KMeans(n_clusters=n_clusters, random_state=0, n_init="auto")
-    labels = model.fit_predict(scaled)
+    model.fit(scaled)
 
-    result = station_summary.loc[features.index].copy()
-    result["cluster"] = labels.astype(str)
+    result = complete.copy()
+    result["cluster"] = model.labels_.astype(str)
     return result
+
+
+def cluster_diagnostics(features: pd.DataFrame, k_values: range) -> pd.DataFrame:
+    """Inertia and silhouette score for each k in ``k_values`` -- the two
+    standard diagnostics for picking how many KMeans clusters to use.
+    Inertia (within-cluster sum of squared distances) always keeps falling
+    as k grows, so it's read for where the drop-off flattens out (the
+    "elbow"); silhouette score (-1 to 1, higher is better-separated
+    clusters) has an actual peak to read off directly instead.
+    """
+    complete = features.dropna()
+    scaled = StandardScaler().fit_transform(complete)
+
+    rows = []
+    for k in k_values:
+        if k < 2 or k >= len(complete):
+            continue
+        model = KMeans(n_clusters=k, random_state=0, n_init="auto").fit(scaled)
+        rows.append(
+            {
+                "k": k,
+                "inertia": float(model.inertia_),
+                "silhouette": float(silhouette_score(scaled, model.labels_)),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+# Shared across every clustering view (Clustering tab, Map tab's cluster
+# mode) rather than duplicated per view -- both need the exact same
+# "recommend a k before the slider renders" behavior, and drift between
+# two copies of this logic would be an easy, silent bug to introduce later.
+MAX_CLUSTER_K = 10
+
+
+def compute_k_diagnostics(feature_matrix: pd.DataFrame, complete: pd.DataFrame) -> tuple[pd.DataFrame | None, int | None]:
+    """Inertia and silhouette score across k=2..MAX_CLUSTER_K, meant to be
+    computed *before* a cluster-count slider renders so its initial value
+    can be seeded with a recommended k instead of an arbitrary fixed
+    default. The recommendation comes from silhouette score (the k with
+    the most clearly separated groups) -- unlike inertia, which always
+    keeps falling as k grows, silhouette has an actual peak to recommend
+    from. Returns ``(None, None)`` when there aren't enough complete rows
+    to compare more than one k.
+    """
+    max_k = min(MAX_CLUSTER_K, len(complete) - 1)
+    if max_k < 2:
+        return None, None
+    diagnostics = cluster_diagnostics(feature_matrix, range(2, max_k + 1))
+    if diagnostics.empty:
+        return None, None
+    best_k = int(diagnostics.loc[diagnostics["silhouette"].idxmax(), "k"])
+    return diagnostics, best_k
 
 
 PARAMETER_UNITS = {

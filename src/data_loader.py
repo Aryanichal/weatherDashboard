@@ -9,10 +9,14 @@ is pinned in requirements.txt. If these calls start failing after an
 version: https://wetterdienst.readthedocs.io/
 """
 
+import datetime as dt
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from zipfile import BadZipFile
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 from wetterdienst import Settings
@@ -52,6 +56,27 @@ TREND_START_YEAR = 2007
 ANOMALY_BASELINE_START_YEAR = 1991
 ANOMALY_BASELINE_END_YEAR = 2020
 
+# Clustering needs a real population (hundreds of stations), not the
+# handful a user picks by hand in the station multiselect -- see
+# stations_in_region() below. Splits are at the midpoint of the network's
+# own lat/lon range, not federal-state borders or the old East/West
+# Germany line, since climate tracks latitude/altitude/coastal proximity
+# far more than administrative or historical political boundaries.
+REGION_OPTIONS = ["All Germany", "North", "South", "East", "West"]
+_GERMANY_LAT_MIDPOINT = 51.2
+_GERMANY_LON_MIDPOINT = 10.5
+# Capped so a wide date range (or "All Germany") still fetches in a
+# reasonable time -- climate-zone-style clustering has no need for
+# literally every station DWD has ever operated. DWD ships one ZIP
+# archive per station (see get_station_data()'s docstring), so fetch
+# time scales with station count and is dominated by per-station network
+# round-trips rather than data volume -- empirically, 40 stations took
+# anywhere from ~15s to ~50s depending on DWD server conditions, and 100+
+# occasionally spiked past a minute. 40 is chosen as a balance between a
+# real population (order-of-magnitude beyond a hand-picked handful) and
+# staying inside what's tolerable for an interactive rerun.
+MAX_REGION_STATIONS = 40
+
 
 def list_stations() -> pd.DataFrame:
     """Return metadata (station_id, name, latitude, longitude, height, ...)
@@ -78,6 +103,36 @@ def get_station_metadata(station_ids: list[str]) -> pd.DataFrame:
         settings=SETTINGS,
     ).filter_by_station_id(station_id=station_ids)
     return request.df.to_pandas()
+
+
+# See get_station_data()'s own comment at its call site for the measured
+# speedup this buys; 8 is a courtesy ceiling on concurrent connections to
+# a public government server, not a value that was observed to fail.
+_MAX_FETCH_WORKERS = 8
+
+
+def _fetch_station_chunk(station_ids: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetch one chunk of stations, with the same corrupted-archive retry
+    get_station_data() has always done -- scoped to just this chunk now
+    rather than the whole request, so one bad station's download doesn't
+    force re-fetching every other station too."""
+    request = DwdObservationRequest(
+        parameters=REQUEST_PARAMETERS,
+        start_date=start_date,
+        end_date=end_date,
+        settings=SETTINGS,
+    ).filter_by_station_id(station_id=station_ids)
+    try:
+        return request.values.all().df.to_pandas()
+    except _ARCHIVE_ERRORS:
+        retry_settings = SETTINGS.model_copy(update={"cache_disable": True})
+        retry_request = DwdObservationRequest(
+            parameters=REQUEST_PARAMETERS,
+            start_date=start_date,
+            end_date=end_date,
+            settings=retry_settings,
+        ).filter_by_station_id(station_id=station_ids)
+        return retry_request.values.all().df.to_pandas()
 
 
 def get_station_data(
@@ -118,31 +173,61 @@ def get_station_data(
     if cache and cache_path.exists():
         return pd.read_parquet(cache_path)
 
-    request = DwdObservationRequest(
-        parameters=REQUEST_PARAMETERS,
-        start_date=start_date,
-        end_date=end_date,
-        settings=SETTINGS,
-    ).filter_by_station_id(station_id=station_ids)
+    # wetterdienst fetches each station's ZIP archive one at a time inside
+    # a single request.values.all() call -- measured empirically at ~3.4s
+    # per station sequentially. Splitting station_ids into chunks and
+    # fetching them concurrently (network I/O releases the GIL, so threads
+    # work fine here) measured a ~22x speedup on a 40-station fetch (134s
+    # -> 6s) with zero errors and identical row counts, so it's the single
+    # biggest lever for this app's slowest operation. _MAX_FETCH_WORKERS
+    # caps concurrency well short of what was tested clean, out of
+    # courtesy to a public government server rather than because higher
+    # was observed to fail.
+    n_workers = min(_MAX_FETCH_WORKERS, len(station_ids))
+    chunks = [station_ids[i::n_workers] for i in range(n_workers)] if n_workers > 1 else [station_ids]
 
-    try:
-        df = request.values.all().df.to_pandas()
-    except _ARCHIVE_ERRORS:
-        retry_settings = SETTINGS.model_copy(update={"cache_disable": True})
-        retry_request = DwdObservationRequest(
-            parameters=REQUEST_PARAMETERS,
-            start_date=start_date,
-            end_date=end_date,
-            settings=retry_settings,
-        ).filter_by_station_id(station_id=station_ids)
+    if len(chunks) == 1:
         try:
-            df = retry_request.values.all().df.to_pandas()
+            frames = [_fetch_station_chunk(chunks[0], start_date, end_date)]
         except _ARCHIVE_ERRORS as exc:
             raise WeatherDataFetchError(
                 "DWD's weather data archive is temporarily unreachable or returned a "
                 "corrupted file. This is usually transient -- please try again in a "
                 "moment, or try again with fewer stations or a narrower date range."
             ) from exc
+    else:
+        frames = []
+        first_error: Exception | None = None
+        with ThreadPoolExecutor(max_workers=len(chunks)) as executor:
+            futures = [executor.submit(_fetch_station_chunk, chunk, start_date, end_date) for chunk in chunks]
+            for future in as_completed(futures):
+                try:
+                    frames.append(future.result())
+                except _ARCHIVE_ERRORS as exc:
+                    first_error = first_error or exc
+        if first_error is not None:
+            # All-or-nothing, matching the single-chunk behavior above --
+            # a station silently missing from a clustering population
+            # because its one chunk failed is a worse outcome than the
+            # whole fetch failing loudly and being retried.
+            raise WeatherDataFetchError(
+                "DWD's weather data archive is temporarily unreachable or returned a "
+                "corrupted file. This is usually transient -- please try again in a "
+                "moment, or try again with fewer stations or a narrower date range."
+            ) from first_error
+
+    if len(frames) > 1:
+        # Threads finish in whatever order the network happens to respond,
+        # so a naive concat would leave row order (and anything downstream
+        # that infers a station's plotted color from first-appearance
+        # order, e.g. Time Series' legend) shuffled differently on every
+        # rerun. Sorting restores the same deterministic order the old
+        # single sequential request always produced.
+        df = pd.concat(frames, ignore_index=True).sort_values(
+            ["station_id", "parameter", "date"], kind="stable"
+        ).reset_index(drop=True)
+    else:
+        df = frames[0]
 
     if cache:
         df.to_parquet(cache_path)
@@ -391,9 +476,141 @@ def load_station_metadata(station_ids: list[str]) -> pd.DataFrame:
     return get_station_metadata(station_ids)
 
 
+def stations_in_region(region: str, start_date: dt.date, end_date: dt.date) -> pd.DataFrame:
+    """Station metadata (station_id, name, latitude, longitude, ...) for a
+    real clustering population: every station that was actually reporting
+    at some point in [start_date, end_date] (excludes ones that closed
+    decades earlier or hadn't opened yet, which would just fetch as empty),
+    narrowed to one geographic half of Germany if ``region`` isn't
+    "All Germany" (see REGION_OPTIONS/the lat/lon midpoints above).
+
+    Deterministically capped at MAX_REGION_STATIONS by taking an even
+    spread across station IDs sorted ascending (via ``np.linspace``
+    indices) rather than the first N -- a plain prefix would arbitrarily
+    favor however DWD happened to assign IDs instead of staying spatially
+    representative of the requested region.
+    """
+    stations = load_stations()
+    start_ts = pd.Timestamp(start_date, tz="UTC")
+    end_ts = pd.Timestamp(end_date, tz="UTC")
+    active = stations[(stations["start_date"] <= end_ts) & (stations["end_date"] >= start_ts)]
+
+    if region == "North":
+        active = active[active["latitude"] >= _GERMANY_LAT_MIDPOINT]
+    elif region == "South":
+        active = active[active["latitude"] < _GERMANY_LAT_MIDPOINT]
+    elif region == "East":
+        active = active[active["longitude"] >= _GERMANY_LON_MIDPOINT]
+    elif region == "West":
+        active = active[active["longitude"] < _GERMANY_LON_MIDPOINT]
+
+    active = active.sort_values("station_id").reset_index(drop=True)
+    if len(active) > MAX_REGION_STATIONS:
+        indices = np.linspace(0, len(active) - 1, MAX_REGION_STATIONS).round().astype(int)
+        active = active.iloc[indices]
+    return active
+
+
 @st.cache_data(show_spinner="Fetching observations from DWD...")
 def load_data(station_ids: list[str], start: str, end: str) -> pd.DataFrame:
     return get_station_data(station_ids, start, end)
+
+
+def _region_cache_path(region: str, start_date: str, end_date: str) -> Path:
+    dataset_key = "-".join(f"{resolution}-{dataset}" for resolution, dataset, *_ in REQUEST_PARAMETERS)
+    safe_region = region.replace(" ", "-")
+    return DATA_DIR / f"region-{safe_region}_{start_date}_{end_date}_{dataset_key}.parquet"
+
+
+def get_region_station_data(region: str, station_ids: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+    """Like get_station_data(), but disk-cached under a short key derived
+    from the region name (e.g. "region-North_2023-01-01_2023-12-31_....parquet")
+    instead of every station ID joined together -- a region's station list
+    can run to 40 IDs, which would make an unreasonably long filename via
+    get_station_data()'s own cache= keying, and the region name is already
+    a perfectly good cache key on its own, since stations_in_region() is
+    itself deterministic for a given (region, date range).
+
+    This is a second, independent cache layer on top of load_region_data()'s
+    st.cache_data one below: that one only lives as long as the current
+    server process, this one persists on disk across restarts -- so a
+    region/date-range combination already fetched once stays instant even
+    after redeploying or restarting the app, not just within one running
+    session. Also what start_background_region_prefetch() below writes
+    into ahead of time, from outside any Streamlit script run.
+    """
+    cache_path = _region_cache_path(region, start_date, end_date)
+    if cache_path.exists():
+        return pd.read_parquet(cache_path)
+    df = get_station_data(station_ids, start_date, end_date, cache=False)
+    df.to_parquet(cache_path)
+    return df
+
+
+# A separate cached wrapper around the exact same fetch, purely so
+# clustering's region-sized requests (see stations_in_region() above) get
+# their own explanatory spinner text instead of load_data()'s generic one
+# -- st.cache_data's show_spinner message is fixed per-function, not
+# overridable per call, and "up to a minute" with no reason reads as the
+# app hanging. Keeping this as a distinct function also means its cache
+# entries don't collide with load_data()'s if both happen to request an
+# identical station list, which is harmless (Streamlit just caches twice).
+@st.cache_data(
+    show_spinner=(
+        "Fetching weather data for this region. DWD serves one file per station, so pulling "
+        "up to 40 stations at once can take up to a minute on first load..."
+    )
+)
+def load_region_data(region: str, station_ids: list[str], start: str, end: str) -> pd.DataFrame:
+    return get_region_station_data(region, station_ids, start, end)
+
+
+# Warms get_region_station_data()'s on-disk cache for every region, at the
+# app's own default date range, in a background thread -- once per server
+# process (the module-level flag below is what makes repeat calls, e.g.
+# every Streamlit rerun, a no-op instead of spawning a new thread each
+# time). Means a user who opens Clustering or Map's cluster mode after the
+# app has been running a while finds the default date range already
+# cached, instead of paying the up-to-a-minute DWD fetch right when
+# they're waiting on it -- even if nobody has visited those tabs yet this
+# session, since st.cache_data's own cache (and this disk cache) are both
+# shared across every session on this server process, not per-user.
+#
+# Deliberately calls get_region_station_data() directly rather than
+# load_region_data() -- st.cache_data's machinery expects to run inside a
+# real Streamlit script execution (for its spinner, mainly), which a
+# background thread started at import time isn't; the plain function only
+# touches the disk cache, which is exactly what needs pre-warming here.
+_PREFETCH_LOCK = threading.Lock()
+_PREFETCH_STARTED = False
+DEFAULT_DATE_RANGE = ("2023-01-01", "2023-12-31")
+
+
+def start_background_region_prefetch() -> None:
+    global _PREFETCH_STARTED
+    with _PREFETCH_LOCK:
+        if _PREFETCH_STARTED:
+            return
+        _PREFETCH_STARTED = True
+
+    def _run() -> None:
+        start, end = DEFAULT_DATE_RANGE
+        start_date, end_date = dt.date.fromisoformat(start), dt.date.fromisoformat(end)
+        for region in REGION_OPTIONS:
+            try:
+                candidates = stations_in_region(region, start_date, end_date)
+                if candidates.empty:
+                    continue
+                get_region_station_data(region, candidates["station_id"].tolist(), start, end)
+            except Exception:
+                # Best-effort warmup only -- a real request from the UI
+                # later will surface any genuine fetch problem properly
+                # (as a WeatherDataFetchError shown to the user), so a
+                # background failure here should stay silent rather than
+                # crash a thread nothing is watching.
+                pass
+
+    threading.Thread(target=_run, name="region-prefetch", daemon=True).start()
 
 
 @st.cache_data(show_spinner="Loading long-run city temperatures from DWD...")

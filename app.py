@@ -10,7 +10,13 @@ import pandas as pd
 import streamlit as st
 
 from src.dashboard_context import DashboardContext
-from src.data_loader import WeatherDataFetchError, load_data, load_stations
+from src.data_loader import (
+    REGION_OPTIONS,
+    WeatherDataFetchError,
+    load_data,
+    load_stations,
+    start_background_region_prefetch,
+)
 from src.ui_theme import apply_dynamic_theme, render_app_background, render_brand
 from src.views import clustering, global_warming, live_weather, map_view, regression, time_series
 from src.views.common import render_section_label, render_segmented_nav_css
@@ -20,14 +26,35 @@ st.set_page_config(page_title="Weather Dashboard", layout="wide")
 render_app_background()
 render_brand()
 
-# A couple of well-known stations preselected so the app is usable
-# immediately, without the user having to search the full list first. Only
-# the IDs are hardcoded -- display names are always looked up from the
-# loaded station list below, so they match DWD's actual official spelling
-# instead of a hand-typed label going stale/wrong.
-DEFAULT_STATION_IDS = ["00433", "01048"]
-# A compact, useful city list for the normal station picker. The complete DWD
-# directory remains available through the optional browse control below.
+# Runs once per server process (see its own docstring in src/data_loader.py
+# for why a plain module-level flag there makes every subsequent call --
+# including one on every rerun of this script, which is every interaction
+# in the app -- an instant no-op rather than spawning a thread each time).
+# Warms Clustering/Map's cluster mode for the app's default region/date
+# range in the background, so opening those tabs doesn't always pay the
+# full DWD fetch cost live.
+start_background_region_prefetch()
+
+# A handful of well-known, geographically spread-out stations preselected
+# so the app is usable immediately, without the user having to search the
+# full list first. Only the IDs are hardcoded -- display names are always
+# looked up from the loaded station list below, so they match DWD's actual
+# official spelling instead of a hand-typed label going stale/wrong.
+DEFAULT_STATION_IDS = [
+    "00433",  # Berlin-Tempelhof
+    "03379",  # München-Stadt
+    "01420",  # Frankfurt/Main
+    "01975",  # Hamburg-Fuhlsbüttel
+    "04928",  # Stuttgart (Schnarrenberg)
+]
+# A compact, useful city list for the normal station picker (see the
+# "Browse all DWD stations" checkbox below). The complete DWD directory
+# remains available through that optional browse control -- this is just
+# what shows before it's checked. Unioned with DEFAULT_STATION_IDS
+# wherever it's actually used so the preselected defaults above always
+# resolve to something pickable even before browsing is turned on, rather
+# than silently losing whichever of them (Hamburg-Fuhlsbüttel, Stuttgart)
+# aren't already on this shorter list.
 RECOMMENDED_CITY_STATION_IDS = ["00433", "01048", "03379", "01420", "02014", "01443"]
 
 HISTORICAL_VIEWS = {
@@ -43,9 +70,11 @@ _SHARED_HISTORICAL_VIEW_KEY = "shared_active_historical_view"
 # Two-tier navigation: the top-level choice is "what kind of weather info
 # do I want" -- live, right-now conditions vs. digging into historical
 # data -- not a flat row of six tabs. Only after picking "Analyse
-# Historical Data" does its own five-way sub-nav (and the shared station/
+# Historical Data" does its own five-way sub-nav (and the shared selection/
 # date-range row below it, which only means something for those five
-# views) appear. Live Weather is a single, self-contained view with its
+# views) appear -- that row's left slot is the station multiselect for four
+# of them, swapped for a "Region" selectbox on Clustering (see below).
+# Live Weather is a single, self-contained view with its
 # own location picker and no "date range" concept at all (see
 # src/views/live_weather.py's module docstring), so it never needs
 # either -- hence it being its own top-level branch rather than a sixth
@@ -78,6 +107,16 @@ _TOP_LEVEL_NAV_KEY = "top_level_nav"
 # station/date-range controls below it instead (see the
 # render_segmented_nav_css() call for _HISTORICAL_VIEW_KEY below).
 render_segmented_nav_css(_TOP_LEVEL_NAV_KEY, option_count=2, font_size="2.5rem", margin_bottom="1rem")
+
+# Clustering's own "Map View"/"Scatter Plot" toggle needs its styling
+# present in the DOM on every rerun, not only while Clustering itself is
+# showing -- see render_view_selector_css()'s own docstring in
+# src/views/clustering.py for the one-frame flash of Streamlit's default
+# pill-button skin this fixes on the exact rerun that switches away to
+# Live Weather. A scoped CSS rule with nothing to match is a no-op, so
+# this costs nothing on every other run.
+clustering.render_view_selector_css()
+
 top_level = st.segmented_control(
     "Section",
     options=["Live Weather", "Weather Analysis"],
@@ -114,9 +153,19 @@ else:
     # two-tier hierarchy; the much larger margin-bottom is what actually
     # separates it from the station/date-range controls below, which are
     # a distinct content section, not another nav tier.
+    #
+    # Clustering is the one exception: its own "Map View"/"Scatter Plot"
+    # row (render_view_selector() in src/views/clustering.py) renders
+    # directly below this one as a third nav tier, not a content section,
+    # so it needs the tight top-level-to-sub-nav spacing instead of the
+    # wide one -- read from session_state here (already seeded with
+    # whichever view is about to render, either from the widget's own
+    # persisted value or the reseed right above) since that's known before
+    # the widget below actually runs.
+    is_clustering = st.session_state.get(_HISTORICAL_VIEW_KEY) == "Clustering"
     render_segmented_nav_css(
         _HISTORICAL_VIEW_KEY, option_count=len(HISTORICAL_VIEWS), font_size="1.05rem",
-        margin_top="0.5rem", margin_bottom="2rem",
+        margin_top="0.5rem", margin_bottom=("1rem" if is_clustering else "2rem"),
     )
     active_view = st.segmented_control(
         "Navigation",
@@ -130,7 +179,39 @@ else:
         active_view = "Time Series"
     st.session_state[_SHARED_HISTORICAL_VIEW_KEY] = active_view
 
+    # id_to_name/id_by_name cover every station DWD has, not just whatever
+    # ends up selected below -- Clustering (see src/views/clustering.py)
+    # relies on that to look up display names for stations outside the
+    # multiselect entirely, since it clusters over a whole region instead.
+    stations_df = load_stations()
+    name_by_id = dict(zip(stations_df["station_id"], stations_df["name"]))
+    id_by_name = {v: k for k, v in name_by_id.items()}
+
+    # Clustering's own "Map View"/"Scatter Plot" toggle renders here,
+    # directly above the Region/Date-range row, rather than inside
+    # clustering.render() itself below -- so it reads as one more level of
+    # the page's own top navigation (see render_view_selector()'s
+    # docstring in src/views/clustering.py) instead of a control sitting
+    # below content that hasn't rendered yet.
+    if active_view == "Clustering":
+        clustering.render_view_selector()
+
+    # Clustering runs over every station in a region (see
+    # stations_in_region() in src/data_loader.py), not a hand-picked
+    # selection, so the station multiselect the other four views share
+    # doesn't apply to it -- showing it there would just be a control that
+    # silently does nothing. It gets a "Region" selectbox in that same slot
+    # instead; Date range still applies to every view, Clustering included.
+    # Map View's own "Cluster stations by" multiselect renders further
+    # down, alongside its k-slider (see _render_map_view() in src/views/
+    # clustering.py), rather than in this row.
     selection_cols = st.columns([3, 1])
+
+    # Date range renders first (into its own column) since the "Weather
+    # stations" side below now depends on it -- filtering to date-
+    # compatible stations needs start_date/end_date already chosen, so
+    # that column's own block has to come after this one despite them
+    # sharing one row.
     with selection_cols[1]:
         render_section_label("Date range")
         start_date, end_date = st.date_input(
@@ -143,92 +224,111 @@ else:
         )
 
     with selection_cols[0]:
-        stations_df = load_stations().copy()
-        stations_df["start_date"] = pd.to_datetime(stations_df["start_date"], utc=True, errors="coerce")
-        stations_df["end_date"] = pd.to_datetime(stations_df["end_date"], utc=True, errors="coerce")
-        selected_start = pd.Timestamp(start_date, tz="UTC")
-        selected_end = pd.Timestamp(end_date, tz="UTC")
-        # The DWD station list contains a station's reporting window. Restrict
-        # choices to windows that overlap the chosen dates, so users cannot
-        # select a station that has no climate-summary data for this analysis.
-        date_compatible_stations = stations_df.loc[
-            (stations_df["start_date"] <= selected_end)
-            & (stations_df["end_date"].isna() | (stations_df["end_date"] >= selected_start))
-        ]
-        # Read the checkbox's own persisted value before the widget itself
-        # renders (it keeps its key across reruns the same way any other
-        # keyed widget does) so "Weather stations" -- like Date range in
-        # the column next to it -- can be the first thing in this column,
-        # rather than sitting one widget lower than Date range because
-        # this checkbox used to render above it.
-        show_all_stations = st.session_state.get("browse_all_historical_stations", False)
-        available_stations = (
-            date_compatible_stations
-            if show_all_stations
-            else date_compatible_stations.loc[
-                date_compatible_stations["station_id"].isin(RECOMMENDED_CITY_STATION_IDS)
-            ]
-        )
-        name_by_id = dict(zip(available_stations["station_id"], available_stations["name"]))
-        id_by_name = {v: k for k, v in name_by_id.items()}
-        available_names = list(name_by_id.values())
-
-        # A date-range change can make an existing selection invalid. Remove
-        # it before rendering the widget rather than leaving a stale option.
-        station_selector_key = "historical_station_selector"
-        if station_selector_key in st.session_state:
-            st.session_state[station_selector_key] = [
-                name for name in st.session_state[station_selector_key] if name in available_names
-            ]
-
-        render_section_label("Weather stations")
-        selected_names = st.multiselect(
-            "Weather stations",
-            options=available_names,
-            default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
-            key=station_selector_key,
-            label_visibility="collapsed",
-            help="Only stations with climate-summary data overlapping the selected date range are listed.",
-        )
-        show_all_stations = st.checkbox(
-            "Browse all DWD stations for this date range",
-            value=False,
-            key="browse_all_historical_stations",
-            help=(
-                "By default, a compact list of verified city stations is shown. Since not every DWD "
-                "station reports on all the parameters for a given time range, some stations here may "
-                "still be missing the specific parameter you pick above."
-            ),
-        )
-        if show_all_stations:
-            st.caption(f"{len(available_names):,} stations are available for this date range.")
+        if active_view == "Clustering":
+            render_section_label("Region")
+            region = st.selectbox("Region", REGION_OPTIONS, label_visibility="collapsed")
+            selected_names: list[str] = []
+            selected_ids: list[str] = []
         else:
-            st.caption("Showing six recommended city stations. Enable browsing to search all compatible stations.")
-        selected_ids = [id_by_name[n] for n in selected_names]
+            region = None
+            stations_df = load_stations().copy()
+            stations_df["start_date"] = pd.to_datetime(stations_df["start_date"], utc=True, errors="coerce")
+            stations_df["end_date"] = pd.to_datetime(stations_df["end_date"], utc=True, errors="coerce")
+            selected_start = pd.Timestamp(start_date, tz="UTC")
+            selected_end = pd.Timestamp(end_date, tz="UTC")
+            # The DWD station list contains a station's reporting window. Restrict
+            # choices to windows that overlap the chosen dates, so users cannot
+            # select a station that has no climate-summary data for this analysis.
+            date_compatible_stations = stations_df.loc[
+                (stations_df["start_date"] <= selected_end)
+                & (stations_df["end_date"].isna() | (stations_df["end_date"] >= selected_start))
+            ]
+            # Read the checkbox's own persisted value before the widget itself
+            # renders (it keeps its key across reruns the same way any other
+            # keyed widget does) so "Weather stations" -- like Date range in
+            # the column next to it -- can be the first thing in this column,
+            # rather than sitting one widget lower than Date range because
+            # this checkbox used to render above it.
+            show_all_stations = st.session_state.get("browse_all_historical_stations", False)
+            available_stations = (
+                date_compatible_stations
+                if show_all_stations
+                else date_compatible_stations.loc[
+                    # Unioned with DEFAULT_STATION_IDS (see its own comment
+                    # above) so the preselected defaults stay pickable here
+                    # even before "browse all" is turned on.
+                    date_compatible_stations["station_id"].isin(
+                        set(RECOMMENDED_CITY_STATION_IDS) | set(DEFAULT_STATION_IDS)
+                    )
+                ]
+            )
+            name_by_id = dict(zip(available_stations["station_id"], available_stations["name"]))
+            id_by_name = {v: k for k, v in name_by_id.items()}
+            available_names = list(name_by_id.values())
 
-    if not selected_ids:
-        st.info("Select at least one station above to load data.")
-        st.stop()
+            # A date-range change can make an existing selection invalid. Remove
+            # it before rendering the widget rather than leaving a stale option.
+            station_selector_key = "historical_station_selector"
+            if station_selector_key in st.session_state:
+                st.session_state[station_selector_key] = [
+                    name for name in st.session_state[station_selector_key] if name in available_names
+                ]
 
-    try:
-        raw = load_data(selected_ids, str(start_date), str(end_date))
-    except WeatherDataFetchError as exc:
-        st.error(f"Couldn't load weather data: {exc}")
-        st.stop()
+            render_section_label("Weather stations")
+            selected_names = st.multiselect(
+                "Weather stations",
+                options=available_names,
+                default=[name_by_id[s] for s in DEFAULT_STATION_IDS if s in name_by_id],
+                key=station_selector_key,
+                label_visibility="collapsed",
+                help="Only stations with climate-summary data overlapping the selected date range are listed.",
+            )
+            show_all_stations = st.checkbox(
+                "Browse all DWD stations for this date range",
+                value=False,
+                key="browse_all_historical_stations",
+                help=(
+                    "By default, a compact list of verified city stations is shown. Since not every DWD "
+                    "station reports on all the parameters for a given time range, some stations here may "
+                    "still be missing the specific parameter you pick above."
+                ),
+            )
+            if show_all_stations:
+                st.caption(f"{len(available_names):,} stations are available for this date range.")
+            else:
+                st.caption("Showing six recommended city stations. Enable browsing to search all compatible stations.")
+            selected_ids = [id_by_name[n] for n in selected_names]
 
-    if raw.empty:
-        st.warning("No data returned for this selection.")
-        st.stop()
+    if active_view == "Clustering":
+        # Clustering fetches its own region-scoped data independently (see
+        # src/views/clustering.py) -- nothing here needs the shared "raw"
+        # frame, so skip fetching it entirely rather than downloading data
+        # for the (unused, in this view) default station selection.
+        raw = pd.DataFrame()
+    else:
+        if not selected_ids:
+            st.info("Select at least one station above to load data.")
+            st.stop()
 
-    returned_ids = set(raw["station_id"].astype(str))
-    unavailable_names = [name for name in selected_names if str(id_by_name[name]) not in returned_ids]
-    if unavailable_names:
-        st.warning(
-            "No observations were returned for: " + ", ".join(unavailable_names) + ". They were excluded."
-        )
-        selected_names = [name for name in selected_names if name not in unavailable_names]
+        try:
+            raw = load_data(selected_ids, str(start_date), str(end_date))
+        except WeatherDataFetchError as exc:
+            st.error(f"Couldn't load weather data: {exc}")
+            st.stop()
 
-    raw["station_name"] = raw["station_id"].map(name_by_id)
+        if raw.empty:
+            st.warning("No data returned for this selection.")
+            st.stop()
+
+        returned_ids = set(raw["station_id"].astype(str))
+        unavailable_names = [name for name in selected_names if str(id_by_name[name]) not in returned_ids]
+        if unavailable_names:
+            st.warning(
+                "No observations were returned for: " + ", ".join(unavailable_names) + ". They were excluded."
+            )
+            selected_names = [name for name in selected_names if name not in unavailable_names]
+
+        raw["station_name"] = raw["station_id"].map(name_by_id)
 
     ctx = DashboardContext(
         raw=raw,
@@ -237,6 +337,8 @@ else:
         id_to_name=name_by_id,
         start_date=start_date,
         end_date=end_date,
+        region=region,
+        region_column=selection_cols[0] if active_view == "Clustering" else None,
     )
 
     HISTORICAL_VIEWS[active_view].render(ctx)

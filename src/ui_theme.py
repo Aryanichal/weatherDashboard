@@ -361,6 +361,19 @@ _BASE_CSS = """
 [class*="-stat-plain"] [data-testid="stMetricValue"] {
     font-size: 29px !important;
 }
+/* st.slider()'s thumb jumps straight to each new step position with no
+   transition of its own -- most noticeable on a slider with few possible
+   values spread over a wide track (e.g. Clustering's 2-6 "Number of
+   clusters"), where each step covers a large chunk of the track and the
+   jump reads as the drag skipping rather than sliding. This doesn't
+   change the discrete stepping itself (the value still can only ever be
+   a whole number), just animates the thumb (and the filled portion of
+   the track behind it) gliding to each new step instead of teleporting.
+   Targeted by its inline transform rather than BaseWeb's own hashed
+   class name, since that hash isn't a stable selector across versions. */
+[data-testid="stSlider"] div[style*="translate(-50%, -50%)"] {
+    transition: left 0.1s ease-out;
+}
 </style>
 """
 

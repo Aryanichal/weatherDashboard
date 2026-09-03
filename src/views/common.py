@@ -2,14 +2,18 @@
 
 import datetime as dt
 import json
+import math
 from collections.abc import Callable
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
+from plotly.subplots import make_subplots
 
 from src.analysis import (
     COMPOSITE_PARAMETER_GROUPS,
+    PARAMETER_UNITS,
     TEMPERATURE_COMPOSITE_KEY,
     TEMPERATURE_TREND_PARAMETER_BY_LABEL,
     categorize_parameter,
@@ -17,13 +21,15 @@ from src.analysis import (
 )
 from src.dashboard_context import DashboardContext
 from src.data_loader import load_station_metadata
-from src.ui_theme import ACCENT_HEX_BY_CATEGORY, chart_card
+from src.ui_theme import ACCENT_HEX_BY_CATEGORY, chart_card, render_chart, style_fig
 
 # Every chart-bearing view (Time Series, Map, Regression, Clustering)
 # shares this same chart/Key-Figures row split -- 72% chart, 28% Key
 # Figures box -- so the ratio lives here once rather than being repeated
 # (and drifting) per view.
 CHART_ROW_WIDTH_RATIO = [0.72, 0.28]
+
+_PLAIN_MAP_CONFIG = {"displaylogo": False, "modeBarButtonsToRemove": ["select2d", "lasso2d"]}
 
 
 def pretty_name(parameter: str) -> str:
@@ -32,6 +38,162 @@ def pretty_name(parameter: str) -> str:
     "humidity_pressure_vapor") should instead set an explicit "label" in
     their COMPOSITE_PARAMETER_GROUPS entry -- see _dropdown_label()."""
     return " ".join(word.capitalize() for word in parameter.split("_"))
+
+
+def parameter_label_with_unit(parameter: str) -> str:
+    """"wind_speed" -> "Wind Speed (m/s)", falling back to the bare name for
+    a parameter with no known unit (see PARAMETER_UNITS in src/analysis.py)."""
+    unit = PARAMETER_UNITS.get(parameter, "")
+    return f"{pretty_name(parameter)} ({unit})" if unit else pretty_name(parameter)
+
+
+def render_cluster_profile(clustered: pd.DataFrame, feature_cols: list[str], value_labels: dict[str, str]) -> None:
+    """Per-cluster feature averages plus station counts -- shared by the
+    Clustering tab and the Map tab's cluster-coloring mode (src/views/
+    clustering.py, src/views/map_view.py) so both present the exact same
+    "what does this cluster actually mean" table. Without this, a cluster
+    is just an arbitrary number (0/1/2); this is what turns "Cluster 2"
+    into something readable, e.g. "warm and dry"."""
+    render_section_label("Cluster profile", style="header")
+    # "Mean " prefixed onto every column header, not just implied by the
+    # section title -- these are each cluster's *average* on that
+    # parameter, not a single station's raw reading, and that distinction
+    # is easy to miss glancing at a bare parameter name in a table cell.
+    mean_labels = {f: f"Mean {value_labels[f]}" for f in feature_cols}
+    profile = clustered.groupby("cluster")[feature_cols].mean().rename(columns=mean_labels).round(1)
+    profile.insert(0, "Stations", clustered.groupby("cluster").size())
+    with chart_card():
+        st.dataframe(profile, width="stretch")
+
+
+_K_DIAGNOSTICS_EXPLANATION = (
+    "**Inertia** is the sum of squared distances from every station's standardized "
+    "feature values to its own cluster's center. Lower means tighter, more compact "
+    "clusters.\n\n"
+    "**Silhouette score** measures, for each station, how much closer it sits to its "
+    "own cluster's average distance than to the nearest other cluster's. It's averaged "
+    "across every station and scaled from -1 to 1. Higher means better-separated "
+    "clusters.\n\n"
+    "**Note:** With a single parameter, this recommendation is only meaningful when that "
+    "parameter has a genuine gap in it, like a handful of high-altitude stations sitting "
+    "noticeably colder than everywhere else. A parameter with no such gap (humidity, say, "
+    "if every station reports a similar value) gives the algorithm nothing to peak on, so "
+    "each extra cluster keeps slightly improving the score and the recommendation just "
+    "lands on the highest k allowed instead of a real number of groups."
+)
+
+
+def _nice_axis_step(value_range: float, target_ticks: int = 5) -> float:
+    """A "1-2-5-times-a-power-of-ten" tick step sized so roughly
+    ``target_ticks`` of them fit across ``value_range`` -- silhouette
+    score only ever spans a narrow band (bounded to [-1, 1], but real
+    values cluster far tighter than that), and Plotly's own auto tick
+    spacing is tuned for a full-width axis: it can land on a step wide
+    enough that only one or two multiples of it fall inside a range this
+    narrow, leaving the axis looking almost unlabeled. Computing the step
+    from the actual data range instead keeps it readable regardless of
+    how narrow that range turns out to be."""
+    if value_range <= 0:
+        return 1.0
+    rough_step = value_range / target_ticks
+    magnitude = 10 ** math.floor(math.log10(rough_step))
+    residual = rough_step / magnitude
+    nice = 1 if residual < 1.5 else 2 if residual < 3 else 5 if residual < 7 else 10
+    return nice * magnitude
+
+
+def render_k_diagnostics_explanation() -> None:
+    """A permanent, always-visible explanation of how inertia and
+    silhouette score are each calculated -- its own bordered box (same
+    chart_card() "white box" skin as every other chart-bearing element in
+    the app), not a click/hover tooltip, so it doesn't require a
+    deliberate interaction to discover. Rendered as its own call, separate
+    from render_k_diagnostics_chart() below, so each caller can place it
+    wherever makes sense relative to their own k-slider (e.g. below it,
+    see the call sites in src/views/clustering.py) instead of it being
+    pinned to a fixed spot next to the chart."""
+    with chart_card():
+        render_section_label("What is Inertia and Silhouette Score?", style="header")
+        st.markdown(_K_DIAGNOSTICS_EXPLANATION)
+
+
+def render_k_diagnostics_chart(
+    diagnostics: pd.DataFrame, best_k: int, collapsed: bool = True, card_key: str | None = None
+) -> None:
+    """Elbow (inertia) + silhouette score across k, backing a cluster-count
+    slider's recommended-k label -- shared by the Clustering tab and the
+    Map tab's cluster mode (see compute_k_diagnostics() in src/analysis.py
+    for how ``diagnostics``/``best_k`` are produced). Collapsed into an
+    expander by default since the slider's own label already states the
+    headline number and this is for whoever wants to see *why* -- pass
+    ``collapsed=False`` to render it in place instead (e.g. sitting next to
+    the map itself, where an expander's own click-to-open affordance would
+    be an extra step for a chart that's meant to be glanced at directly).
+
+    ``card_key``, only used when ``collapsed=False``, wraps the chart in
+    its own chart_card() with padding stripped (same scoped-CSS trick
+    render_full_bleed_map() uses) so it fills as much of that bordered box
+    as the figure's own axis-label margins allow, rather than sitting on
+    the plain page background.
+
+    The "Inertia and silhouette score by k" title renders as plain page
+    text above the chart rather than as the figure's own Plotly title --
+    a Plotly title sits inside the figure's own margin and gets clipped by
+    a zero-padding card (see ``card_key`` above). What the two metrics
+    actually mean lives in render_k_diagnostics_explanation() above, not
+    here -- call it separately wherever it should sit for a given caller."""
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Scatter(x=diagnostics["k"], y=diagnostics["inertia"], mode="lines+markers", name="Inertia"),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(x=diagnostics["k"], y=diagnostics["silhouette"], mode="lines+markers", name="Silhouette score"),
+        secondary_y=True,
+    )
+    fig.update_xaxes(title_text="Number of clusters (k)")
+    fig.update_yaxes(title_text="Inertia", secondary_y=False)
+    silhouette_span = diagnostics["silhouette"].max() - diagnostics["silhouette"].min()
+    fig.update_yaxes(
+        title_text="Silhouette score", dtick=_nice_axis_step(silhouette_span), secondary_y=True
+    )
+    # An explicit empty title, not just an omitted one -- style_fig() (via
+    # render_chart() below) unconditionally sets title_font_color on every
+    # figure it touches, and Plotly renders a literal "undefined" title
+    # placeholder if no title was ever set at all (same quirk noted on the
+    # other charts that go through style_fig()). The title itself now
+    # lives outside the chart entirely (see render_section_label() calls
+    # below).
+    fig.update_layout(title="", height=280, margin=dict(t=20, b=10))
+
+    def _render_caption() -> None:
+        # Two short, self-contained sentences rather than one long
+        # parenthetical-heavy paragraph (what "higher"/"lower" mean for
+        # each metric lives in render_k_diagnostics_explanation() instead,
+        # so this only needs to say what happened *this run*).
+        st.caption(f"Silhouette score peaks at k={best_k}, which is why the slider above starts there.")
+        st.caption('Inertia keeps falling as k grows, but flattens out around the same point (the classic "elbow").')
+
+    if collapsed:
+        with st.expander("How was the recommended k chosen?"):
+            render_section_label("Inertia and silhouette score by k", style="header")
+            _render_caption()
+            render_chart(fig)
+            render_k_diagnostics_explanation()
+    else:
+        render_section_label("Inertia and silhouette score by k", style="header")
+        _render_caption()
+        if card_key:
+            st.markdown(
+                f'<style>div[data-testid="stVerticalBlock"][class*="{card_key}"] {{ '
+                f"padding: 0 !important; "
+                f"}}</style>",
+                unsafe_allow_html=True,
+            )
+            with chart_card(key=card_key):
+                render_chart(fig)
+        else:
+            render_chart(fig)
 
 
 def _dropdown_label(value: str) -> str:
@@ -765,6 +927,40 @@ def render_missing_stations_indicator(missing: list[dict[str, str]], anchor_id: 
         """,
         height=0,
     )
+
+
+def render_full_bleed_map(
+    fig, card_key: str, missing: list[dict[str, str]] | None = None, anchor_id: str | None = None
+) -> None:
+    """Render a scatter_map figure edge-to-edge inside its own chart_card(),
+    with no title or legend baked into the plot itself -- style_fig() first
+    (keeps theme-aware colors/modebar), then zero every margin, since a
+    Plotly figure's own default margins would otherwise leave a band of
+    plain card-background around the map, reading as a second, inner box
+    nested inside chart_card()'s own. The card's default padding is
+    stripped via a scoped CSS rule on this card's own key. Shared by the
+    Map tab's value-mode map and the Clustering tab's map-view mode (see
+    src/views/map_view.py, src/views/clustering.py) since both need the
+    exact same treatment.
+
+    ``missing``/``anchor_id``, when given, render the same missing-stations
+    warning icon the other chart-bearing tabs use -- must happen from
+    *inside* this card's own ``with chart_card():`` block to position
+    correctly (see render_missing_stations_indicator()'s docstring above),
+    which is why it's threaded through here rather than left to the caller.
+    """
+    style_fig(fig)
+    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+    st.markdown(
+        f'<style>div[data-testid="stVerticalBlock"][class*="{card_key}"] {{ '
+        f"padding: 0 !important; "
+        f"}}</style>",
+        unsafe_allow_html=True,
+    )
+    with chart_card(key=card_key):
+        if missing and anchor_id:
+            render_missing_stations_indicator(missing, anchor_id, card_key=card_key)
+        st.plotly_chart(fig, width="stretch", config=_PLAIN_MAP_CONFIG)
 
 
 def render_missing_stations_notice(missing: list[dict[str, str]], anchor_id: str | None = None) -> None:
