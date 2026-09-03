@@ -265,7 +265,7 @@ def _validation_residuals(
 
 
 def build_and_save_forecasts() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Evaluate both models, save their 10-year forecasts, and return all data.
+    """Evaluate both models, save their forecasts (FORECAST_HORIZON_YEARS years out), and return all data.
 
     Returns ``(forecasts, metrics, historical_values)`` for hot-day, July-
     temperature, and rainy-day targets. Forecast rows are saved to

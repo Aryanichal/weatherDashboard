@@ -155,12 +155,13 @@ else:
             (stations_df["start_date"] <= selected_end)
             & (stations_df["end_date"].isna() | (stations_df["end_date"] >= selected_start))
         ]
-        show_all_stations = st.checkbox(
-            "Browse all DWD stations for this date range",
-            value=False,
-            key="browse_all_historical_stations",
-            help="By default, a compact list of verified city stations is shown.",
-        )
+        # Read the checkbox's own persisted value before the widget itself
+        # renders (it keeps its key across reruns the same way any other
+        # keyed widget does) so "Weather stations" -- like Date range in
+        # the column next to it -- can be the first thing in this column,
+        # rather than sitting one widget lower than Date range because
+        # this checkbox used to render above it.
+        show_all_stations = st.session_state.get("browse_all_historical_stations", False)
         available_stations = (
             date_compatible_stations
             if show_all_stations
@@ -189,8 +190,18 @@ else:
             label_visibility="collapsed",
             help="Only stations with climate-summary data overlapping the selected date range are listed.",
         )
+        show_all_stations = st.checkbox(
+            "Browse all DWD stations for this date range",
+            value=False,
+            key="browse_all_historical_stations",
+            help=(
+                "By default, a compact list of verified city stations is shown. Since not every DWD "
+                "station reports on all the parameters for a given time range, some stations here may "
+                "still be missing the specific parameter you pick above."
+            ),
+        )
         if show_all_stations:
-            st.caption(f"{len(available_names):,} stations have data coverage for this date range.")
+            st.caption(f"{len(available_names):,} stations are available for this date range.")
         else:
             st.caption("Showing six recommended city stations. Enable browsing to search all compatible stations.")
         selected_ids = [id_by_name[n] for n in selected_names]
