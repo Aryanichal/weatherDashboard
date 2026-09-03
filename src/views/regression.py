@@ -5,21 +5,53 @@ import streamlit as st
 
 from src.analysis import fit_trend
 from src.dashboard_context import DashboardContext
-from src.views.common import render_parameter_and_subset
+from src.ui_theme import chart_card, render_chart
+from src.views.common import (
+    CHART_ROW_WIDTH_RATIO,
+    missing_station_reason,
+    pretty_name,
+    render_parameter_and_subset,
+    render_section_label,
+)
 
 
 def render(ctx: DashboardContext) -> None:
-    parameter, subset = render_parameter_and_subset(ctx.raw, key="parameter_regression")
-    station_for_trend = st.selectbox("Station", ctx.selected_names, key="trend_station")
+    _parameter, _subset, parameter, subset, render_key_figures = render_parameter_and_subset(
+        ctx.raw, key="parameter_regression", collapse_composites=True
+    )
+    render_section_label("Station")
+    station_for_trend = st.selectbox(
+        "Station", ctx.selected_names, key="trend_station", label_visibility="collapsed"
+    )
     station_id = ctx.id_by_name[station_for_trend]
     trend_input = subset[subset["station_id"] == station_id]
 
     if len(trend_input) < 2:
-        st.info("Not enough data points for a trend line.")
+        if trend_input.empty:
+            reason = missing_station_reason(ctx, parameter, station_id, ctx.start_date, ctx.end_date)
+            st.info(f"No trend for {station_for_trend} -- {reason}.")
+        else:
+            st.info(
+                f"Only one {pretty_name(parameter)} reading for {station_for_trend} in the "
+                f"selected date range -- at least two are needed to fit a trend."
+            )
         return
 
     result = fit_trend(trend_input)
-    st.write(f"Slope: {result['slope_per_day'] * 365:.4f} units/year")
-    fig = px.line(result["data"], x="date", y=["value", "trend"])
+    value_label = pretty_name(parameter)
+    render_section_label(f"Slope: {result['slope_per_day'] * 365:.4f} units/year", style="header")
+    fig = px.line(
+        result["data"], x="date", y=["value", "trend"],
+        title=f"{value_label} trend for {station_for_trend}",
+        # Plotly renames its synthetic "value" column to "_value" to avoid
+        # colliding with our real "value" column -- label that key instead.
+        labels={"_value": value_label, "variable": "Series"},
+    )
+    fig.for_each_trace(lambda t: t.update(name={"value": value_label, "trend": "Trend"}.get(t.name, t.name)))
     fig.update_xaxes(tickformat="%d-%m-%Y", hoverformat="%d-%m-%Y")
-    st.plotly_chart(fig, width="stretch")
+    row_columns = st.columns(CHART_ROW_WIDTH_RATIO)
+    with row_columns[0], chart_card():
+        render_chart(fig)
+    if render_key_figures:
+        with row_columns[1]:
+            render_key_figures()
